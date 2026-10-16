@@ -115,6 +115,19 @@ fn stop_game_server() -> Result<(), String> {
 }
 
 #[tauri::command]
+fn open_external_url(url: String) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        use std::process::Command;
+        Command::new("cmd")
+            .args(["/C", "start", "", &url])
+            .spawn()
+            .map_err(|e| format!("No se pudo abrir navegador: {}", e))?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
 fn greet(name: &str) -> String {
     format!("HostShift Core listo: {}", name)
 }
@@ -134,7 +147,8 @@ pub fn run() {
             send_command_to_server,
             start_playit_tunnel,
             stop_playit_tunnel,
-            send_command_to_playit
+            send_command_to_playit,
+            open_external_url
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

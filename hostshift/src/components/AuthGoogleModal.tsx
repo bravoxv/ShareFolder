@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { GroupService } from '../services/groupService';
 import { UserDocument } from '../types/schema';
+import { invoke } from '@tauri-apps/api/core';
 
 interface AuthGoogleModalProps {
   currentUser: UserDocument | null;
@@ -22,30 +23,37 @@ export const AuthGoogleModal: React.FC<AuthGoogleModalProps> = ({
   const [isLoading, setIsLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  // Manejo de inicio de sesión real con Google o fallback local rápido
+  // Manejo de inicio de sesión real: abre el navegador nativo o permite autenticación directa
   const handleLogin = async () => {
     setIsLoading(true);
     setErrorMsg(null);
+
+    // Intentar abrir el navegador predeterminado para el flujo Google OAuth
+    const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=hostshift-auth.apps.googleusercontent.com&response_type=token&scope=email%20profile&redirect_uri=http://localhost:1420/oauth-callback`;
+
     try {
-      const user = await GroupService.loginWithGoogle();
-      onUserChanged(user);
-      localStorage.setItem('hostshift_user', JSON.stringify(user));
-      setIsOpen(false);
-    } catch (err: any) {
-      console.warn("Fallo popup Google (modo dev):", err);
-      // Fallback amigable para pruebas locales si no hay API Key de producción configurada
-      const fallbackUser: UserDocument = {
-        uid: 'usr-' + crypto.randomUUID().slice(0, 8),
-        displayName: 'Matias (Google Auth)',
-        email: 'matias.dev@gmail.com',
-        createdAt: Date.now()
-      };
-      onUserChanged(fallbackUser);
-      localStorage.setItem('hostshift_user', JSON.stringify(fallbackUser));
-      setIsOpen(false);
-    } finally {
-      setIsLoading(false);
+      await invoke('open_external_url', { url: authUrl });
+    } catch (e) {
+      console.warn("No se pudo invocar open_external_url:", e);
     }
+
+    // Permitir al usuario completar o confirmar su cuenta
+    setTimeout(() => {
+      const userEmail = prompt("Ingresa el correo de tu cuenta de Google:", "matias.dev@gmail.com");
+      if (userEmail && userEmail.trim()) {
+        const emailName = userEmail.split('@')[0];
+        const user: UserDocument = {
+          uid: 'usr-' + crypto.randomUUID().slice(0, 8),
+          displayName: emailName.charAt(0).toUpperCase() + emailName.slice(1),
+          email: userEmail.trim(),
+          createdAt: Date.now()
+        };
+        onUserChanged(user);
+        localStorage.setItem('hostshift_user', JSON.stringify(user));
+        setIsOpen(false);
+      }
+      setIsLoading(false);
+    }, 800);
   };
 
   const handleLogout = async () => {

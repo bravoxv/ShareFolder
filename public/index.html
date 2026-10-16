@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ShareFolder Coop - Explorador & Host Redundante</title>
+  <script src="/socket.io/socket.io.js"></script>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --panel: #1e293b;
+      --border: #334155;
+      --accent: #38bdf8;
+      --accent-hover: #0284c7;
+      --text: #f8fafc;
+      --muted: #94a3b8;
+      --danger: #ef4444;
+      --success: #22c55e;
+      --warning: #f59e0b;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; }
+    body { background-color: var(--bg); color: var(--text); height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+
+    /* Login Overlay */
+    #login-overlay {
+      position: fixed; inset: 0; background: rgba(15, 23, 42, 0.95);
+      display: flex; align-items: center; justify-content: center; z-index: 9999;
+    }
+    .login-box {
+      background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+      padding: 30px; width: 360px; display: flex; flex-direction: column; gap: 15px; box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+    }
+    .login-box h2 { font-size: 1.3rem; color: var(--accent); }
+    .login-box input {
+      background: #0f172a; border: 1px solid var(--border); padding: 10px; border-radius: 6px;
+      color: var(--text); outline: none;
+    }
+    .login-box button {
+      background: var(--accent); color: #0f172a; border: none; padding: 10px; font-weight: bold;
+      border-radius: 6px; cursor: pointer; transition: 0.2s;
+    }
+    .login-box button:hover { background: var(--accent-hover); }
+
+    /* Topbar */
+    header {
+      background: var(--panel); border-bottom: 1px solid var(--border);
+      padding: 10px 20px; display: flex; align-items: center; justify-content: space-between;
+    }
+    .brand { display: flex; align-items: center; gap: 10px; font-weight: bold; color: var(--accent); }
+    .host-badge {
+      padding: 4px 10px; border-radius: 20px; font-size: 0.8rem; font-weight: bold;
+    }
+    .badge-host { background: rgba(34, 197, 94, 0.2); color: var(--success); border: 1px solid var(--success); }
+    .badge-client { background: rgba(56, 189, 248, 0.2); color: var(--accent); border: 1px solid var(--accent); }
+
+    /* Layout principal */
+    main { display: flex; flex: 1; overflow: hidden; }
+
+    /* Panel izquierdo: Explorador de Archivos */
+    .file-explorer {
+      width: 320px; border-right: 1px solid var(--border); background: #131d31;
+      display: flex; flex-direction: column;
+    }
+    .panel-header {
+      padding: 12px; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 1px;
+      color: var(--muted); border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center;
+    }
+    .tree-container { flex: 1; overflow-y: auto; padding: 10px; }
+    .tree-item {
+      display: flex; align-items: center; justify-content: space-between; padding: 6px 8px;
+      border-radius: 5px; cursor: pointer; margin-bottom: 2px; font-size: 0.9rem; user-select: none;
+    }
+    .tree-item:hover { background: var(--panel); }
+    .item-info { display: flex; align-items: center; gap: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .lock-tag {
+      font-size: 0.7rem; background: var(--danger); color: white; padding: 2px 6px;
+      border-radius: 4px; font-weight: bold;
+    }
+
+    /* Centro: Área de Trabajo / Terminal */
+    .work-area { flex: 1; display: flex; flex-direction: column; }
+    .terminal-container {
+      flex: 1; background: #090d16; padding: 15px; font-family: 'Consolas', monospace;
+      font-size: 0.88rem; overflow-y: auto; color: #cbd5e1; white-space: pre-wrap;
+    }
+    .terminal-bar {
+      background: var(--panel); padding: 8px 15px; border-top: 1px solid var(--border);
+      display: flex; gap: 10px; align-items: center;
+    }
+    .terminal-bar input {
+      flex: 1; background: #0f172a; border: 1px solid var(--border); color: white;
+      padding: 8px; border-radius: 4px; outline: none; font-family: monospace;
+    }
+
+    /* Panel derecho: Usuarios & Mando */
+    .users-panel {
+      width: 280px; border-left: 1px solid var(--border); background: #131d31;
+      display: flex; flex-direction: column;
+    }
+    .user-list { flex: 1; overflow-y: auto; padding: 10px; }
+    .user-card {
+      background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+      padding: 10px; margin-bottom: 8px; display: flex; flex-direction: column; gap: 6px;
+    }
+    .user-card-head { display: flex; justify-content: space-between; align-items: center; font-size: 0.9rem; }
+    .btn-action {
+      background: #334155; color: white; border: none; padding: 5px 8px; border-radius: 4px;
+      cursor: pointer; font-size: 0.75rem; transition: 0.2s;
+    }
+    .btn-action:hover { background: var(--accent); color: black; }
+
+    /* Modal de transferencia */
+    #transfer-modal {
+      display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7);
+      align-items: center; justify-content: center; z-index: 10000;
+    }
+    .modal-content {
+      background: var(--panel); border: 1px solid var(--warning); border-radius: 10px;
+      padding: 20px; width: 400px; display: flex; flex-direction: column; gap: 15px;
+    }
+    .modal-actions { display: flex; justify-content: flex-end; gap: 10px; }
+  </style>
+</head>
+<body>
+
+  <!-- Overlay de Login -->
+  <div id="login-overlay">
+    <div class="login-box">
+      <h2>Conectarse al Workspace</h2>
+      <p style="font-size: 0.8rem; color: var(--muted);">Introduce tu nombre de usuario y la contraseña del servidor compartido.</p>
+      <input type="text" id="username" placeholder="Nombre de usuario (ej: Carlos)" value="Usuario1">
+      <input type="password" id="password" placeholder="Contraseña de la sala" value="1234">
+      <button onclick="login()">Ingresar al Workspace</button>
+      <div id="login-msg" style="color: var(--danger); font-size: 0.85rem; display: none;"></div>
+    </div>
+  </div>
+
+  <!-- Barra Superior -->
+  <header>
+    <div class="brand">
+      <span>📁 ShareFolder Coop</span>
+      <span id="role-badge" class="host-badge badge-client">Conectando...</span>
+    </div>
+    <div style="font-size: 0.85rem; color: var(--muted);">
+      Host actual del server: <b id="host-name" style="color: var(--text);">Nadie</b>
+    </div>
+    <div>
+      <a href="/api/download-snapshot" target="_blank" style="text-decoration: none;">
+        <button class="btn-action">📥 Descargar Snapshot .ZIP</button>
+      </a>
+    </div>
+  </header>
+
+  <!-- Cuerpo de la aplicación -->
+  <main>
+    <!-- Explorador -->
+    <div class="file-explorer">
+      <div class="panel-header">
+        <span>Archivos Compartidos</span>
+        <button class="btn-action" onclick="createSampleFile()">+ Nuevo .bat</button>
+      </div>
+      <div class="tree-container" id="tree-container">
+        <!-- Renderizado dinámico de archivos -->
+      </div>
+    </div>
+
+    <!-- Terminal Compartida y Ejecución -->
+    <div class="work-area">
+      <div class="panel-header">
+        <span>Terminal en Vivo & Salida de Procesos</span>
+        <button class="btn-action" onclick="clearTerminal()">Limpiar</button>
+      </div>
+      <div class="terminal-container" id="terminal-out">Esperando comandos o ejecuciones...</div>
+      <div class="terminal-bar">
+        <span style="color: var(--accent); font-family: monospace;">CMD ></span>
+        <input type="text" id="cmd-input" placeholder="Haz clic en un archivo .bat/.exe a la izquierda o escribe un archivo a ejecutar..." onkeydown="handleCmdKey(event)">
+        <button class="btn-action" onclick="runCustomCommand()">Ejecutar</button>
+      </div>
+    </div>
+
+    <!-- Usuarios y Transferencia de Host -->
+    <div class="users-panel">
+      <div class="panel-header">
+        <span>Usuarios Activos</span>
+      </div>
+      <div class="user-list" id="users-list">
+        <!-- Lista de usuarios -->
+      </div>
+    </div>
+  </main>
+
+  <!-- Modal de confirmación para transferir o recibir host -->
+  <div id="transfer-modal">
+    <div class="modal-content">
+      <h3 style="color: var(--warning);">⚠️ Solicitud de Transferencia de Mando</h3>
+      <p id="transfer-modal-text">El usuario quiere transferirte la autoridad del Host.</p>
+      <div class="modal-actions">
+        <button class="btn-action" style="background: var(--danger);" onclick="respondTransfer(false)">Rechazar</button>
+        <button class="btn-action" style="background: var(--success);" onclick="respondTransfer(true)">Aceptar y Asumir Host</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const socket = io();
+    let myUsername = '';
+    let isMyHost = false;
+    let myFiles = [];
+
+    function login() {
+      const u = document.getElementById('username').value.trim();
+      const p = document.getElementById('password').value.trim();
+      if (!u || !p) return;
+      myUsername = u;
+      socket.emit('auth', { username: u, password: p });
+    }
+
+    socket.on('auth-success', (data) => {
+      document.getElementById('login-overlay').style.display = 'none';
+      isMyHost = data.isHost;
+      updateRoleUI(isMyHost);
+    });
+
+    socket.on('auth-error', (msg) => {
+      const err = document.getElementById('login-msg');
+      err.innerText = msg;
+      err.style.display = 'block';
+    });
+
+    socket.on('system-message', (text) => {
+      logTerminal(`[SISTEMA] ${text}\n`);
+    });
+
+    socket.on('terminal-output', (data) => {
+      logTerminal(data.text);
+    });
+
+    function logTerminal(str) {
+      const term = document.getElementById('terminal-out');
+      term.textContent += str;
+      term.scrollTop = term.scrollHeight;
+    }
+
+    function clearTerminal() {
+      document.getElementById('terminal-out').textContent = '';
+    }
+
+    function updateRoleUI(host) {
+      const badge = document.getElementById('role-badge');
+      if (host) {
+        badge.className = 'host-badge badge-host';
+        badge.innerText = '⭐ TÚ ERES EL HOST';
+      } else {
+        badge.className = 'host-badge badge-client';
+        badge.innerText = '👤 MODO CLIENTE';
+      }
+    }
+
+    // Actualización de Usuarios
+    socket.on('users-update', (data) => {
+      document.getElementById('host-name').innerText = data.currentHostName || 'Ninguno';
+      const container = document.getElementById('users-list');
+      container.innerHTML = '';
+
+      data.users.forEach(u => {
+        const card = document.createElement('div');
+        card.className = 'user-card';
+
+        const isMe = (u.username === myUsername);
+        const cardTitle = document.createElement('div');
+        cardTitle.className = 'user-card-head';
+        cardTitle.innerHTML = `
+          <span><b>${u.username}</b> ${isMe ? '(Tú)' : ''}</span>
+          <span>${u.isHost ? '⭐ Host' : 'Conectado'}</span>
+        `;
+        card.appendChild(cardTitle);
+
+        // Si yo soy el Host y este usuario NO es el host, puedo transferirle la autoridad
+        if (isMyHost && !u.isHost) {
+          const btnTransfer = document.createElement('button');
+          btnTransfer.className = 'btn-action';
+          btnTransfer.style.marginTop = '6px';
+          btnTransfer.innerText = 'Transferir Autoridad';
+          btnTransfer.onclick = () => requestTransferTo(u.socketId, u.username);
+          card.appendChild(btnTransfer);
+        }
+
+        container.appendChild(card);
+      });
+
+      // Actualizar estado propio
+      const self = data.users.find(u => u.username === myUsername);
+      if (self) {
+        isMyHost = self.isHost;
+        updateRoleUI(isMyHost);
+      }
+    });
+
+    function requestTransferTo(socketId, name) {
+      const reset = confirm(`¿Deseas solicitar REINICIAR los archivos del workspace al transferir el mando a ${name}?`);
+      socket.emit('transfer-host-request', { targetSocketId: socketId, requireReset: reset });
+    }
+
+    socket.on('host-transfer-proposal', (data) => {
+      const modal = document.getElementById('transfer-modal');
+      const text = document.getElementById('transfer-modal-text');
+      text.innerText = `${data.fromUsername} desea transferirte la autoridad total del Host.${data.requireReset ? ' [ADVERTENCIA: Se solicitó reiniciar los archivos del workspace]' : ''}`;
+      modal.style.display = 'flex';
+    });
+
+    function respondTransfer(accept) {
+      document.getElementById('transfer-modal').style.display = 'none';
+      socket.emit('transfer-host-respond', { accept });
+    }
+
+    // Render del Árbol de Archivos
+    socket.on('file-tree', (tree) => {
+      myFiles = tree;
+      const container = document.getElementById('tree-container');
+      container.innerHTML = '';
+      if (!tree || tree.length === 0) {
+        container.innerHTML = '<div style="color: var(--muted); font-size: 0.85rem; padding: 10px;">Carpeta compartida vacía. Crea un archivo con el botón de arriba.</div>';
+        return;
+      }
+      renderTree(tree, container);
+    });
+
+    function renderTree(items, container) {
+      items.forEach(item => {
+        const el = document.createElement('div');
+        el.className = 'tree-item';
+
+        const isLocked = !!item.lock;
+        const icon = item.isDir ? '📁' : '📄';
+
+        el.innerHTML = `
+          <div class="item-info">
+            <span>${icon}</span>
+            <span>${item.name}</span>
+          </div>
+          <div>
+            ${isLocked ? `<span class="lock-tag" title="Ocupado por ${item.lock.username}">EN USO: ${item.lock.username}</span>` : ''}
+          </div>
+        `;
+
+        el.onclick = () => {
+          if (item.isDir) return;
+          if (isLocked) {
+            alert(`⚠️ Este archivo está siendo ocupado actualmente por ${item.lock.username} (${item.lock.reason}).`);
+          } else {
+            const run = confirm(`¿Deseas ejecutar o abrir "${item.name}" en la terminal compartida?`);
+            if (run) {
+              socket.emit('run-command', { filePath: item.path });
+            }
+          }
+        };
+
+        container.appendChild(el);
+      });
+    }
+
+    function createSampleFile() {
+      const name = prompt('Nombre del script (ej: test.bat o server.cmd):', 'test.bat');
+      if (!name) return;
+      const content = `@echo off\necho ==============================\necho Ejecutando ${name} en el servidor...\necho Fecha y Hora: %date% %time%\necho ==============================\nping 127.0.0.1 -n 3 > nul\necho Proceso finalizado exitosamente.\n`;
+      socket.emit('create-file', { relPath: name, isDir: false, content });
+    }
+
+    function handleCmdKey(e) {
+      if (e.key === 'Enter') runCustomCommand();
+    }
+
+    function runCustomCommand() {
+      const input = document.getElementById('cmd-input');
+      const val = input.value.trim();
+      if (!val) return;
+      socket.emit('run-command', { filePath: val });
+      input.value = '';
+    }
+  </script>
+</body>
+</html>

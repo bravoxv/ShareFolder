@@ -1,0 +1,17 @@
+{
+  "name": "sharefolder-coop",
+  "version": "1.0.0",
+  "description": "Sistema colaborativo de compartición de carpetas, presencia, ejecución remota y transferencia de host",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "socket.io": "^4.7.5",
+    "chokidar": "^3.6.0",
+    "archiver": "^7.0.1",
+    "unzipper": "^0.12.3",
+    "cors": "^2.8.5"
+  }
+}

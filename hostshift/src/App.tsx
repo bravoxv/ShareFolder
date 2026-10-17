@@ -22,13 +22,15 @@ import {
   Globe,
   ChevronLeft,
   ChevronRight,
-  Share2
+  Share2,
+  GitBranch
 } from 'lucide-react';
 import { Role } from './types/models';
 import { UserDocument, GroupDocument } from './types/schema';
 import { AuthGoogleModal } from './components/AuthGoogleModal';
 import { ShareFilesModal } from './components/ShareFilesModal';
 import { WelcomeScreen } from './components/WelcomeScreen';
+import { GitUpdaterModal } from './components/GitUpdaterModal';
 
 export function App() {
   const [role, setRole] = useState<Role>('owner');
@@ -37,6 +39,7 @@ export function App() {
     return saved ? JSON.parse(saved) : null;
   });
   const [isShareOpen, setIsShareOpen] = useState(false);
+  const [isUpdaterOpen, setIsUpdaterOpen] = useState(false);
   const [serverStatus, setServerStatus] = useState<'offline' | 'starting' | 'online' | 'saving'>('offline');
   const [epoch, setEpoch] = useState<number>(1);
   const [tunnelAddress] = useState<string>('play.hostshift.gg:25565');
@@ -550,6 +553,16 @@ export function App() {
                 <ShieldAlert className="w-3.5 h-3.5" /> Forzar Liberación
               </button>
             )}
+
+            {/* Botón Actualizar desde GitHub */}
+            <button
+              onClick={() => setIsUpdaterOpen(true)}
+              className="flex items-center gap-1.5 px-3.5 py-2.5 bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 rounded-xl text-xs font-bold transition-all shadow-md"
+              title="Comprobar y actualizar solo los archivos modificados desde GitHub"
+            >
+              <GitBranch className="w-3.5 h-3.5 text-indigo-400" />
+              Actualizaciones
+            </button>
           </div>
         </header>
 
@@ -1040,6 +1053,15 @@ export function App() {
         onClose={() => setIsShareOpen(false)}
         serverFolder={serverFolder}
         files={mockFiles}
+      />
+
+      {/* Modal de Actualización Inteligente desde GitHub */}
+      <GitUpdaterModal
+        isOpen={isUpdaterOpen}
+        onClose={() => setIsUpdaterOpen(false)}
+        onUpdateApplied={() => {
+          setLogs(prev => [...prev, '[Actualización] Archivos de la aplicación sincronizados con GitHub.']);
+        }}
       />
     </div>
   );

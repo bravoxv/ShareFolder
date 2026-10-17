@@ -1,9 +1,11 @@
 pub mod process_manager;
 pub mod integrity_engine;
 pub mod file_manager;
+pub mod git_updater;
 
 use integrity_engine::generate_directory_manifest;
 use file_manager::{list_directory_contents, read_file_content, save_file_content};
+use git_updater::{check_git_updates, apply_git_updates};
 use process_manager::ServerProcessManager;
 use std::sync::Mutex;
 use tauri::Emitter;
@@ -178,7 +180,9 @@ pub fn run() {
             send_command_to_playit,
             check_playit_status,
             open_external_url,
-            sync_auth_session
+            sync_auth_session,
+            check_git_updates,
+            apply_git_updates
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

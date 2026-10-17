@@ -16,8 +16,10 @@ import {
   Server,
   Trash2,
   ChevronRight,
-  GitBranch
+  GitBranch,
+  ExternalLink
 } from 'lucide-react';
+import { invoke } from '@tauri-apps/api/core';
 import { UserDocument, GroupDocument } from '../types/schema';
 import { GroupService } from '../services/groupService';
 
@@ -315,15 +317,33 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
                   </form>
                 </div>
 
-                {!showCodeInput ? (
+                <div className="flex flex-col gap-2 pt-2">
                   <button
-                    onClick={() => setShowCodeInput(true)}
-                    className="text-xs text-emerald-400 hover:text-emerald-300 font-medium pt-2 flex items-center justify-center gap-1.5 mx-auto transition-colors"
+                    type="button"
+                    onClick={async () => {
+                      try {
+                        const fileUrl = window.location.href;
+                        await invoke('open_external_url', { url: fileUrl });
+                      } catch {
+                        window.open(window.location.href, '_blank');
+                      }
+                    }}
+                    className="w-full py-2 px-3 bg-cyan-600/15 hover:bg-cyan-600/25 border border-cyan-500/30 text-cyan-300 rounded-xl text-xs font-semibold flex items-center justify-center gap-2 transition-all"
                   >
-                    <KeyRound className="w-3.5 h-3.5" />
-                    ¿Ya iniciaste en Chrome/Edge? Pegar código
+                    <ExternalLink className="w-3.5 h-3.5" />
+                    Abrir en Chrome / Edge para Google
                   </button>
-                ) : (
+
+                  {!showCodeInput ? (
+                    <button
+                      type="button"
+                      onClick={() => setShowCodeInput(true)}
+                      className="text-xs text-emerald-400 hover:text-emerald-300 font-medium py-1 flex items-center justify-center gap-1.5 mx-auto transition-colors"
+                    >
+                      <KeyRound className="w-3.5 h-3.5" />
+                      ¿Ya iniciaste en tu navegador? Pegar código
+                    </button>
+                  ) : (
                   <form onSubmit={handleApplySessionCode} className="pt-2 space-y-2 text-left">
                     <input
                       type="text"
@@ -350,6 +370,7 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
                     </div>
                   </form>
                 )}
+                </div>
               </div>
             </div>
           </div>

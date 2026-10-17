@@ -7,7 +7,9 @@ import {
   Loader2,
   Mail,
   UserPlus,
-  ExternalLink
+  ExternalLink,
+  Copy,
+  KeyRound
 } from 'lucide-react';
 import { UserDocument } from '../types/schema';
 import { auth, db, googleProvider } from '../services/firebase';
@@ -31,13 +33,19 @@ export const AuthGoogleModal: React.FC<AuthGoogleModalProps> = ({
 }) => {
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [showEmailFallback, setShowEmailFallback] = useState(false);
+  const [showCodeInput, setShowCodeInput] = useState(false);
+  const [sessionCodeInput, setSessionCodeInput] = useState('');
   const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [copiedCode, setCopiedCode] = useState(false);
+
+  const isBrowser = !window.__TAURI_INTERNALS__;
 
   useEffect(() => {
-    // Sincronizar cambios de autenticación
+    // Sincronizar cambios de autenticación en este contexto
     const unsubscribe = onAuthStateChanged(auth, async (fireUser) => {
       if (fireUser) {
         try {
@@ -73,37 +81,7 @@ export const AuthGoogleModal: React.FC<AuthGoogleModalProps> = ({
       }
     });
 
-    // 1. Canal entre pestañas y navegador
-    const authChannel = new BroadcastChannel('hostshift_auth_sync');
-    authChannel.onmessage = (event) => {
-      if (event.data && event.data.uid) {
-        onUserChanged(event.data);
-        localStorage.setItem('hostshift_user', JSON.stringify(event.data));
-      }
-    };
-
-    // 2. Si estamos en la app Tauri, escuchar el evento nativo
-    let unlistenTauri: (() => void) | undefined;
-    (async () => {
-      try {
-        const { listen } = await import('@tauri-apps/api/event');
-        unlistenTauri = await listen<string>('auth-session-synced', (ev) => {
-          try {
-            const user = JSON.parse(ev.payload);
-            onUserChanged(user);
-            localStorage.setItem('hostshift_user', JSON.stringify(user));
-          } catch (e) {
-            console.error('Error parsing synced session:', e);
-          }
-        });
-      } catch {}
-    })();
-
-    return () => {
-      unsubscribe();
-      authChannel.close();
-      if (unlistenTauri) unlistenTauri();
-    };
+    return () => unsubscribe();
   }, [onUserChanged]);
 
   const handleOpenBrowserLogin = async () => {
@@ -111,7 +89,6 @@ export const AuthGoogleModal: React.FC<AuthGoogleModalProps> = ({
       const { invoke } = await import('@tauri-apps/api/core');
       await invoke('open_external_url', { url: 'http://localhost:1420' });
     } catch (e) {
-      console.error('Error abriendo navegador:', e);
       window.open('http://localhost:1420', '_blank');
     }
   };
@@ -139,18 +116,6 @@ export const AuthGoogleModal: React.FC<AuthGoogleModalProps> = ({
 
       onUserChanged(userDoc);
       localStorage.setItem('hostshift_user', JSON.stringify(userDoc));
-
-      // Notificar a la app de escritorio y a cualquier otra ventana
-      try {
-        const channel = new BroadcastChannel('hostshift_auth_sync');
-        channel.postMessage(userDoc);
-        channel.close();
-      } catch {}
-
-      try {
-        const { invoke } = await import('@tauri-apps/api/core');
-        await invoke('sync_auth_session', { userJson: JSON.stringify(userDoc) });
-      } catch {}
     } catch (error: any) {
       console.error('Error durante Google Sign-In:', error);
       if (error.code === 'auth/popup-blocked') {
@@ -164,6 +129,35 @@ export const AuthGoogleModal: React.FC<AuthGoogleModalProps> = ({
       }
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleCopyBrowserSession = () => {
+    if (!currentUser) return;
+    const token = btoa(JSON.stringify(currentUser));
+    navigator.clipboard.writeText(token);
+    setCopiedCode(true);
+    setTimeout(() => setCopiedCode(false), 3000);
+  };
+
+  const handleApplySessionCode = (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMsg(null);
+    setSuccessMsg(null);
+
+    try {
+      const parsed = JSON.parse(atob(sessionCodeInput.trim()));
+      if (parsed && parsed.uid && parsed.displayName) {
+        onUserChanged(parsed);
+        localStorage.setItem('hostshift_user', JSON.stringify(parsed));
+        setSuccessMsg('¡Sesión vinculada con éxito!');
+        setShowCodeInput(false);
+        setSessionCodeInput('');
+      } else {
+        setErrorMsg('El código de sesión no es válido.');
+      }
+    } catch {
+      setErrorMsg('Código no reconocido. Asegúrate de copiarlo completo del navegador.');
     }
   };
 
@@ -226,27 +220,40 @@ export const AuthGoogleModal: React.FC<AuthGoogleModalProps> = ({
   return (
     <div>
       {currentUser ? (
-        <div className="bg-slate-950 p-3 rounded-xl border border-slate-800 flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-full bg-indigo-600/20 border border-indigo-500/40 flex items-center justify-center text-indigo-400 font-bold text-xs uppercase">
-              {currentUser.displayName ? currentUser.displayName.charAt(0) : 'U'}
+        <div className="bg-slate-950 p-3 rounded-xl border border-slate-800 space-y-2">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-full bg-indigo-600/20 border border-indigo-500/40 flex items-center justify-center text-indigo-400 font-bold text-xs uppercase">
+                {currentUser.displayName ? currentUser.displayName.charAt(0) : 'U'}
+              </div>
+              <div>
+                <span className="text-xs font-bold text-slate-200 block truncate max-w-[130px]">
+                  {currentUser.displayName}
+                </span>
+                <span className="text-[10px] text-emerald-400 flex items-center gap-1 font-mono truncate max-w-[130px]">
+                  <CheckCircle2 className="w-2.5 h-2.5 flex-shrink-0" /> {currentUser.email || currentUser.uid.slice(0, 10)}
+                </span>
+              </div>
             </div>
-            <div>
-              <span className="text-xs font-bold text-slate-200 block truncate max-w-[130px]">
-                {currentUser.displayName}
-              </span>
-              <span className="text-[10px] text-emerald-400 flex items-center gap-1 font-mono truncate max-w-[130px]">
-                <CheckCircle2 className="w-2.5 h-2.5 flex-shrink-0" /> {currentUser.email || currentUser.uid.slice(0, 10)}
-              </span>
-            </div>
+            <button
+              onClick={handleLogout}
+              title="Cerrar Sesión"
+              className="p-1.5 text-slate-500 hover:text-rose-400 hover:bg-slate-900 rounded-lg transition-colors"
+            >
+              <LogOut className="w-4 h-4" />
+            </button>
           </div>
-          <button
-            onClick={handleLogout}
-            title="Cerrar Sesión"
-            className="p-1.5 text-slate-500 hover:text-rose-400 hover:bg-slate-900 rounded-lg transition-colors"
-          >
-            <LogOut className="w-4 h-4" />
-          </button>
+
+          {/* Si estamos en el navegador web externo, mostrar botón para transferir a la app de escritorio */}
+          {isBrowser && (
+            <button
+              onClick={handleCopyBrowserSession}
+              className="w-full py-1.5 px-2 bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/30 text-emerald-400 rounded-lg text-[10px] font-bold flex items-center justify-center gap-1.5 transition-all"
+            >
+              <Copy className="w-3 h-3" />
+              {copiedCode ? '¡Código Copiado al Portapapeles!' : 'Copiar Código de Sesión a la App'}
+            </button>
+          )}
         </div>
       ) : (
         <div className="space-y-2">
@@ -264,7 +271,7 @@ export const AuthGoogleModal: React.FC<AuthGoogleModalProps> = ({
             {loading ? 'Conectando...' : 'Iniciar Sesión con Google'}
           </button>
 
-          {/* Solución Oficial: Abrir en Navegador (Chrome / Edge) */}
+          {/* Abrir en Navegador Real */}
           <button
             onClick={handleOpenBrowserLogin}
             type="button"
@@ -273,6 +280,49 @@ export const AuthGoogleModal: React.FC<AuthGoogleModalProps> = ({
             <ExternalLink className="w-3.5 h-3.5" />
             Abrir en Navegador (Chrome / Edge)
           </button>
+
+          {/* Botón para pegar el código de sesión generado en el navegador */}
+          {!showCodeInput && (
+            <button
+              onClick={() => setShowCodeInput(true)}
+              type="button"
+              className="w-full text-center text-[11px] text-emerald-400 hover:text-emerald-300 font-semibold transition-colors py-0.5 flex items-center justify-center gap-1"
+            >
+              <KeyRound className="w-3 h-3" />
+              ¿Iniciaste en el navegador? Pegar Código aquí
+            </button>
+          )}
+
+          {showCodeInput && (
+            <form onSubmit={handleApplySessionCode} className="p-2.5 bg-slate-950 border border-slate-800 rounded-xl space-y-2">
+              <span className="text-[10px] text-slate-400 block font-medium">
+                Pega el código de sesión copiado desde Chrome/Edge:
+              </span>
+              <input
+                type="text"
+                required
+                placeholder="Pega el código aquí..."
+                value={sessionCodeInput}
+                onChange={(e) => setSessionCodeInput(e.target.value)}
+                className="w-full bg-slate-900 border border-slate-700 text-xs font-mono text-slate-200 px-2.5 py-1.5 rounded-lg outline-none focus:border-emerald-500"
+              />
+              <div className="flex gap-1.5">
+                <button
+                  type="submit"
+                  className="flex-1 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold transition-all"
+                >
+                  Vincular Sesión
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowCodeInput(false)}
+                  className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-400 rounded-lg text-xs font-medium"
+                >
+                  Cancelar
+                </button>
+              </div>
+            </form>
+          )}
 
           {!showEmailFallback && (
             <button
@@ -289,6 +339,13 @@ export const AuthGoogleModal: React.FC<AuthGoogleModalProps> = ({
         <div className="mt-2 p-2 bg-rose-500/20 border border-rose-500/30 rounded-lg text-rose-300 text-[11px] flex items-center gap-1.5">
           <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
           <span>{errorMsg}</span>
+        </div>
+      )}
+
+      {successMsg && (
+        <div className="mt-2 p-2 bg-emerald-500/20 border border-emerald-500/30 rounded-lg text-emerald-300 text-[11px] flex items-center gap-1.5">
+          <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" />
+          <span>{successMsg}</span>
         </div>
       )}
 

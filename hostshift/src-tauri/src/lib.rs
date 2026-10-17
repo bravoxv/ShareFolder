@@ -2,6 +2,7 @@ pub mod process_manager;
 pub mod integrity_engine;
 pub mod file_manager;
 pub mod git_updater;
+pub mod syncthing;
 
 use integrity_engine::generate_directory_manifest;
 use file_manager::{
@@ -11,6 +12,7 @@ use file_manager::{
 };
 use git_updater::{check_git_updates, apply_git_updates};
 use process_manager::ServerProcessManager;
+use syncthing::{syncthing_connect_group, syncthing_stop};
 use std::sync::Mutex;
 use tauri::Emitter;
 
@@ -292,6 +294,7 @@ fn greet(name: &str) -> String {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             greet,
@@ -316,8 +319,15 @@ pub fn run() {
             get_playit_tunnel_address,
             open_external_url,
             check_git_updates,
-            apply_git_updates
+            apply_git_updates,
+            syncthing_connect_group,
+            syncthing_stop
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_app_handle, event| {
+            if let tauri::RunEvent::Exit = event {
+                let _ = syncthing_stop();
+            }
+        });
 }

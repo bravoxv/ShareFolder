@@ -96,6 +96,17 @@ service cloud.firestore {
           (isGroupAdmin(groupId) || resource.data.uploadedBy == request.auth.uid);
       }
 
+      // IDs públicos de dispositivos Syncthing; nunca se guardan archivos aquí.
+      match /sync_devices/{deviceId} {
+        allow read: if isGroupMember(groupId);
+        allow create, update: if isGroupMember(groupId) &&
+          request.resource.data.userId == request.auth.uid &&
+          request.resource.data.deviceId == deviceId &&
+          request.resource.data.displayName is string;
+        allow delete: if isGroupAdmin(groupId) ||
+          (isGroupMember(groupId) && resource.data.userId == request.auth.uid);
+      }
+
       match /invites/{inviteId} {
         allow read: if isAuthenticated();
         allow create, delete: if isGroupAdmin(groupId);

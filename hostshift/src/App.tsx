@@ -28,15 +28,12 @@ import {
   CheckCircle2
 } from 'lucide-react';
 import { Role } from './types/models';
-import { UserDocument, GroupDocument, SharedFileDocument } from './types/schema';
+import { UserDocument, GroupDocument } from './types/schema';
 import { AuthGoogleModal } from './components/AuthGoogleModal';
 import { ShareFilesModal } from './components/ShareFilesModal';
 import { WelcomeScreen } from './components/WelcomeScreen';
 import { GitUpdaterModal } from './components/GitUpdaterModal';
 import { getGroupPermissionError, GroupService } from './services/groupService';
-import { downloadSharedFiles } from './services/sharedFileService';
-
-const autoSyncKey = (groupId: string, userId: string) => `hostshift_auto_sync_${groupId}_${userId}`;
 
 export function App() {
   const [role, setRole] = useState<Role>('player');
@@ -106,6 +103,7 @@ export function App() {
   });
   const [groupAccessReady, setGroupAccessReady] = useState(false);
   const [groupAccessError, setGroupAccessError] = useState('');
+  const [syncConnectionError, setSyncConnectionError] = useState('');
   const [groupMembers, setGroupMembers] = useState<Array<{ uid: string; displayName: string; role: string }>>([]);
   const [roleUpdateError, setRoleUpdateError] = useState('');
   const [updatingRoleUid, setUpdatingRoleUid] = useState<string | null>(null);
@@ -114,12 +112,6 @@ export function App() {
   const [groupReloadError, setGroupReloadError] = useState('');
   const [isSharedTransferBusy, setIsSharedTransferBusy] = useState(false);
   const sharedTransferBusyRef = useRef(false);
-  const [autoSyncEnabled, setAutoSyncEnabled] = useState(false);
-  const [isAutoSyncing, setIsAutoSyncing] = useState(false);
-  const [autoSyncProgress, setAutoSyncProgress] = useState('');
-  const [autoSyncError, setAutoSyncError] = useState('');
-  const autoSyncBusyRef = useRef(false);
-  const autoSyncKickRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     if (!activeGroup) {
@@ -229,100 +221,54 @@ export function App() {
   });
 
   useEffect(() => {
-    if (!activeGroup || !currentUser) {
-      setAutoSyncEnabled(false);
-      return;
-    }
-    setAutoSyncEnabled(localStorage.getItem(autoSyncKey(activeGroup.id, currentUser.uid)) === 'true');
-    setAutoSyncProgress('');
-    setAutoSyncError('');
-  }, [activeGroup?.id, currentUser?.uid]);
-
-  useEffect(() => {
-    if (!activeGroup || !currentUser || !groupAccessReady || !autoSyncEnabled || !serverFolder || serverStatus !== 'offline') return;
-
-    let cancelled = false;
-    let latestFiles: SharedFileDocument[] = [];
-    const storageKey = autoSyncKey(activeGroup.id, currentUser.uid);
-    const readSyncedVersions = (): Record<string, number> => {
-      try { return JSON.parse(localStorage.getItem(storageKey) || '{}'); }
-      catch { return {}; }
-    };
-
-    const drainPendingFiles = async () => {
-      if (cancelled) return;
-      if (autoSyncBusyRef.current) {
-        autoSyncKickRef.current = () => { void drainPendingFiles(); };
-        return;
-      }
-
-      autoSyncBusyRef.current = true;
-      setIsAutoSyncing(true);
-      setAutoSyncError('');
-      try {
-        while (!cancelled) {
-          const syncedVersions = readSyncedVersions();
-          const file = latestFiles.find(item => syncedVersions[item.id] !== item.updatedAt);
-          if (!file) break;
-          setAutoSyncProgress(`Sincronizando ${file.relativePath}...`);
-          await downloadSharedFiles([file], serverFolder, (done, total) => {
-            setAutoSyncProgress(`Descargando ${file.relativePath}: bloque ${done} de ${total}`);
-          }, completedFile => {
-            syncedVersions[completedFile.id] = completedFile.updatedAt;
-            localStorage.setItem(storageKey, JSON.stringify(syncedVersions));
-          });
-        }
-        if (!cancelled) setAutoSyncProgress('');
-      } catch (error) {
-        if (!cancelled) {
-          setAutoSyncProgress('');
-          setAutoSyncError(error instanceof Error ? error.message : String(error));
-        }
-      } finally {
-        autoSyncBusyRef.current = false;
-        setIsAutoSyncing(false);
-        const kick = autoSyncKickRef.current;
-        autoSyncKickRef.current = null;
-        if (kick) setTimeout(kick, 0);
-      }
-    };
-
-    const unsubscribe = GroupService.watchSharedFiles(activeGroup.id, files => {
-      latestFiles = files;
-      void drainPendingFiles();
-    }, error => setAutoSyncError(error.message || 'No se pudieron revisar los archivos del grupo.'));
-
-    return () => {
-      cancelled = true;
-      unsubscribe();
-    };
-  }, [activeGroup?.id, currentUser?.uid, groupAccessReady, autoSyncEnabled, serverFolder, serverStatus]);
-
-  useEffect(() => {
     if (!activeGroup || !currentUser || !groupAccessReady) return;
     return GroupService.watchGroupReloadSignal(activeGroup.id, () => {
-      if (autoSyncBusyRef.current || sharedTransferBusyRef.current) setPendingGroupReload(true);
+      if (sharedTransferBusyRef.current) setPendingGroupReload(true);
       else window.location.reload();
     }, error => console.warn('No se pudo escuchar la señal de recarga del grupo:', error));
   }, [activeGroup?.id, currentUser?.uid, groupAccessReady]);
 
   useEffect(() => {
-    if (pendingGroupReload && !isAutoSyncing && !isSharedTransferBusy && !autoSyncBusyRef.current && !sharedTransferBusyRef.current) {
+    if (!activeGroup || !currentUser || !groupAccessReady || !serverFolder) return;
+    let cancelled = false;
+    let stopWatching: (() => void) | null = null;
+    const connect = async () => {
+      try {
+        const local = await invoke<{ deviceId: string }>('syncthing_connect_group', {
+          groupId: activeGroup.id,
+          folderPath: serverFolder,
+          peerIds: [],
+          canPublish: role === 'owner' || role === 'admin'
+        });
+        if (cancelled) return;
+        await GroupService.publishSyncDevice(activeGroup.id, local.deviceId, currentUser.displayName);
+        if (cancelled) return;
+        stopWatching = GroupService.watchSyncDevices(activeGroup.id, devices => {
+          void invoke('syncthing_connect_group', {
+            groupId: activeGroup.id,
+            folderPath: serverFolder,
+            peerIds: devices.map(device => device.deviceId),
+            canPublish: role === 'owner' || role === 'admin'
+          }).then(() => { if (!cancelled) setSyncConnectionError(''); })
+            .catch(error => { if (!cancelled) setSyncConnectionError(error instanceof Error ? error.message : String(error)); });
+        }, error => { if (!cancelled) setSyncConnectionError(error.message); });
+      } catch (error) {
+        if (!cancelled) setSyncConnectionError(error instanceof Error ? error.message : String(error));
+      }
+    };
+    void connect();
+    return () => { cancelled = true; stopWatching?.(); };
+  }, [activeGroup?.id, currentUser?.uid, currentUser?.displayName, groupAccessReady, serverFolder, role]);
+
+  useEffect(() => {
+    if (pendingGroupReload && !isSharedTransferBusy && !sharedTransferBusyRef.current) {
       window.location.reload();
     }
-  }, [pendingGroupReload, isAutoSyncing, isSharedTransferBusy]);
+  }, [pendingGroupReload, isSharedTransferBusy]);
 
   const handleSharedTransferBusyChange = (busy: boolean) => {
     sharedTransferBusyRef.current = busy;
     setIsSharedTransferBusy(busy);
-  };
-
-  const handleAutoSyncChange = (enabled: boolean) => {
-    if (!activeGroup || !currentUser) return;
-    localStorage.setItem(autoSyncKey(activeGroup.id, currentUser.uid), String(enabled));
-    setAutoSyncEnabled(enabled);
-    setAutoSyncError('');
-    if (!enabled) setAutoSyncProgress('');
   };
 
   const [currentSubDir, setCurrentSubDir] = useState<string>('');
@@ -545,7 +491,7 @@ export function App() {
   };
 
   const handleStartServer = async () => {
-    if (!canStartServer || isAutoSyncing) return;
+    if (!canStartServer) return;
     if (!launcherFile) {
       alert("Por favor selecciona primero qué archivo/programa iniciará el servidor (en la lista de archivos presiona 'Establecer como Iniciador').");
       return;
@@ -876,16 +822,16 @@ export function App() {
             {serverStatus === 'offline' ? (
               <button
                 onClick={handleStartServer}
-                disabled={!canStartServer || isAutoSyncing}
-                title={isAutoSyncing ? 'Sincronizando los archivos del grupo' : 'Encender el servidor'}
+                disabled={!canStartServer}
+                title="Encender el servidor"
                 className={`min-h-10 flex items-center justify-center gap-2 px-3 sm:px-4 py-2 rounded-lg font-bold text-xs sm:text-sm whitespace-nowrap transition-all shadow-lg ${
-                  !canStartServer || isAutoSyncing
+                  !canStartServer
                     ? 'bg-slate-800 text-slate-600 cursor-not-allowed border border-slate-700'
                     : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-900/40 hover:scale-[1.02]'
                 }`}
               >
                 <Power className="w-4 h-4 flex-shrink-0" />
-                <span>{isAutoSyncing ? 'Sincronizando...' : 'Encender servidor'}</span>
+                <span>Encender servidor</span>
               </button>
             ) : isOwnerOrAdmin ? (
               <button
@@ -939,14 +885,9 @@ export function App() {
           </div>
         )}
 
-        {autoSyncProgress && (
-          <div className="bg-cyan-950/70 border-b border-cyan-500/30 px-8 py-2 text-xs text-cyan-200" role="status">
-            Sincronización automática: {autoSyncProgress}
-          </div>
-        )}
-        {autoSyncError && (
-          <div className="bg-rose-950/70 border-b border-rose-500/30 px-8 py-2 text-xs text-rose-200" role="alert">
-            Falló la sincronización automática: {autoSyncError}
+        {syncConnectionError && (
+          <div className="bg-amber-950/70 border-b border-amber-500/30 px-8 py-2 text-xs text-amber-200" role="alert">
+            No se pudo conectar Syncthing al grupo: {syncConnectionError}
           </div>
         )}
 
@@ -1483,13 +1424,14 @@ export function App() {
         currentUser={currentUser!}
         currentRole={role}
         serverFolder={serverFolder}
-        autoSyncEnabled={autoSyncEnabled}
-        autoSyncProgress={autoSyncProgress}
-        autoSyncError={autoSyncError}
-        isAutoSyncing={isAutoSyncing}
-        serverIsOffline={serverStatus === 'offline'}
-        onAutoSyncChange={handleAutoSyncChange}
-        onTransferBusyChange={handleSharedTransferBusyChange}
+        onSelectFolder={(folder) => {
+          setServerFolder(folder);
+          localStorage.setItem('hostshift_server_folder', folder);
+          GroupService.saveGroupServerConfig(activeGroup.id, { serverFolder: folder });
+          setCurrentSubDir('');
+          void loadRealDirectory(folder, '');
+        }}
+        onSyncBusyChange={handleSharedTransferBusyChange}
       />
 
       {/* Modal de Actualización Inteligente desde GitHub */}

@@ -24,7 +24,7 @@ import {
   MemberDocument, 
   InviteDocument, 
   UserDocument,
-  SharedFileDocument,
+  SyncDeviceDocument,
   GroupRole
 } from '../types/schema';
 
@@ -256,14 +256,15 @@ export class GroupService {
     return user.displayName || user.email?.split('@')[0] || 'Propietario';
   }
 
-  static async getSharedFiles(groupId: string): Promise<SharedFileDocument[]> {
-    const snapshot = await getDocs(collection(db, 'groups', groupId, 'shared_files'));
-    return snapshot.docs.map(file => file.data() as SharedFileDocument);
+  static async publishSyncDevice(groupId: string, deviceId: string, displayName: string): Promise<void> {
+    const user = await this.requireFirebaseUser();
+    const data: SyncDeviceDocument = { deviceId, userId: user.uid, displayName, updatedAt: Date.now() };
+    await setDoc(doc(db, 'groups', groupId, 'sync_devices', deviceId), data, { merge: true });
   }
 
-  static watchSharedFiles(groupId: string, onChange: (files: SharedFileDocument[]) => void, onError?: (error: Error) => void): () => void {
-    return onSnapshot(collection(db, 'groups', groupId, 'shared_files'), snapshot => {
-      onChange(snapshot.docs.map(file => file.data() as SharedFileDocument));
+  static watchSyncDevices(groupId: string, onChange: (devices: SyncDeviceDocument[]) => void, onError?: (error: Error) => void): () => void {
+    return onSnapshot(collection(db, 'groups', groupId, 'sync_devices'), snapshot => {
+      onChange(snapshot.docs.map(item => item.data() as SyncDeviceDocument));
     }, error => onError?.(error));
   }
 

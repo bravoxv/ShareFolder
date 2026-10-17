@@ -1,10 +1,12 @@
-import React, { useEffect, useState } from 'react';
-import { Share2, Upload, Download, RefreshCw, FolderOpen, FileText, Trash2 } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { invoke } from '@tauri-apps/api/core';
+import { open } from '@tauri-apps/plugin-dialog';
+import { Copy, FolderOpen, RefreshCw, Share2, Wifi } from 'lucide-react';
 import { GroupService } from '../services/groupService';
-import { deleteSharedFile, downloadSharedFiles, uploadServerFiles } from '../services/sharedFileService';
 import { Role } from '../types/models';
-import { SharedFileDocument } from '../types/schema';
+import { SyncDeviceDocument } from '../types/schema';
 
+interface SyncResult { deviceId: string; peerCount: number; folderId: string; }
 interface ShareFilesModalProps {
   groupId: string;
   groupName: string;
@@ -12,156 +14,72 @@ interface ShareFilesModalProps {
   currentUser: { uid: string; displayName: string };
   currentRole: Role;
   serverFolder: string;
-  autoSyncEnabled: boolean;
-  autoSyncProgress: string;
-  autoSyncError: string;
-  isAutoSyncing: boolean;
-  serverIsOffline: boolean;
-  onAutoSyncChange: (enabled: boolean) => void;
-  onTransferBusyChange: (busy: boolean) => void;
+  onSelectFolder: (folder: string) => void;
   isOpen: boolean;
   onClose: () => void;
+  onSyncBusyChange: (busy: boolean) => void;
 }
 
-const formatSize = (bytes: number) => bytes < 1024 * 1024
-  ? `${(bytes / 1024).toFixed(1)} KB`
-  : `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-
 export const ShareFilesModal: React.FC<ShareFilesModalProps> = ({
-  groupId,
-  groupName,
-  ownerName,
-  currentUser,
-  currentRole,
-  serverFolder,
-  autoSyncEnabled,
-  autoSyncProgress,
-  autoSyncError,
-  isAutoSyncing,
-  serverIsOffline,
-  onAutoSyncChange,
-  onTransferBusyChange,
-  isOpen,
-  onClose
+  groupId, groupName, ownerName, currentUser, currentRole, serverFolder, onSelectFolder, isOpen, onClose, onSyncBusyChange
 }) => {
-  const [files, setFiles] = useState<SharedFileDocument[]>([]);
-  const [filesLoaded, setFilesLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [progress, setProgress] = useState('');
+  const [deviceId, setDeviceId] = useState('');
+  const [devices, setDevices] = useState<SyncDeviceDocument[]>([]);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const stopWatching = useRef<null | (() => void)>(null);
 
-  const refreshFiles = async () => {
-    setError('');
-    try {
-      const shared = await GroupService.getSharedFiles(groupId);
-      setFiles(shared);
-      setFilesLoaded(true);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'No se pudieron cargar los archivos del grupo.');
-    }
-  };
-
-  useEffect(() => {
-    if (!isOpen) return;
-    setError('');
-    setFilesLoaded(false);
-    return GroupService.watchSharedFiles(groupId, shared => {
-      setFiles(shared);
-      setFilesLoaded(true);
-    }, err => {
-      setError(err.message || 'No se pudieron cargar los archivos del grupo.');
-    });
-  }, [isOpen, groupId]);
-
+  useEffect(() => () => stopWatching.current?.(), []);
   if (!isOpen) return null;
 
-  const handleUpload = async () => {
-    if (!serverFolder) {
-      setError('Configura primero la carpeta local del servidor.');
-      return;
-    }
+  const syncPeers = async (nextDevices: SyncDeviceDocument[]) => {
+    setDevices(nextDevices);
+    if (nextDevices.length) setNotice(`Dispositivos registrados: ${nextDevices.length}. Syncthing conecta las PCs cuando están disponibles.`);
+  };
+
+  const handleConnect = async () => {
+    if (!serverFolder) { setError('Selecciona primero la carpeta local del servidor.'); return; }
     setBusy(true);
-    onTransferBusyChange(true);
+    onSyncBusyChange(true);
     setError('');
-    setNotice('');
-    setProgress('Preparando archivos del servidor...');
+    setNotice('Iniciando Syncthing y registrando este dispositivo…');
     try {
-      const total = await uploadServerFiles(groupId, serverFolder, currentUser.displayName, (done, count) => {
-        setProgress(`Subiendo bloques: ${done} de ${count}...`);
+      const local = await invoke<SyncResult>('syncthing_connect_group', { groupId, folderPath: serverFolder, peerIds: [], canPublish: currentRole === 'owner' || currentRole === 'admin' });
+      setDeviceId(local.deviceId);
+      await GroupService.publishSyncDevice(groupId, local.deviceId, currentUser.displayName);
+      stopWatching.current?.();
+      stopWatching.current = GroupService.watchSyncDevices(groupId, nextDevices => { void syncPeers(nextDevices); }, watchError => setError(watchError.message));
+      setNotice('Dispositivo registrado. Preparando la sincronización del grupo…');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      setNotice('');
+    } finally {
+      setBusy(false);
+      onSyncBusyChange(false);
+    }
+  };
+
+  const copyId = async () => {
+    if (!deviceId) return;
+    await navigator.clipboard.writeText(deviceId);
+    setNotice('ID de Syncthing copiado.');
+  };
+
+  const chooseFolder = async () => {
+    setError('');
+    try {
+      const selected = await open({
+        directory: true,
+        multiple: false,
+        ...(serverFolder ? { defaultPath: serverFolder } : {})
       });
-      setNotice(`Se compartieron ${total} archivos con el grupo.`);
-      await refreshFiles();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(false);
-      onTransferBusyChange(false);
-      setProgress('');
-    }
-  };
-
-  const handleAutoSyncToggle = () => {
-    if (autoSyncEnabled) {
-      onAutoSyncChange(false);
-      setNotice('La sincronización automática quedó desactivada en esta PC.');
-      return;
-    }
-    if (!serverFolder) {
-      setError('Configura primero la carpeta local del servidor para activar la sincronización.');
-      return;
-    }
-    if (!serverIsOffline) {
-      setError('La sincronización automática solo funciona mientras el servidor está apagado.');
-      return;
-    }
-    const totalSize = files.reduce((sum, file) => sum + file.sizeBytes, 0);
-    if (!window.confirm(`Esta PC descargará automáticamente los archivos nuevos del grupo cuando el servidor esté apagado. Actualmente hay ${files.length} archivos (${formatSize(totalSize)}). Los archivos locales con la misma ruta se reemplazarán. ¿Activar sincronización en esta PC?`)) return;
-    onAutoSyncChange(true);
-    setError('');
-    setNotice('Sincronización automática activada para esta PC.');
-  };
-
-  const handleDownload = async () => {
-    if (!serverFolder) {
-      setError('Configura primero una carpeta de servidor de destino.');
-      return;
-    }
-    if (!files.length) {
-      setError('Este grupo aún no tiene archivos compartidos.');
-      return;
-    }
-    if (!window.confirm(`Se descargarán ${files.length} archivos a la carpeta del servidor. Los archivos existentes con la misma ruta se reemplazarán. ¿Continuar?`)) return;
-
-    setBusy(true);
-    onTransferBusyChange(true);
-    setError('');
-    setNotice('');
-    try {
-      const count = await downloadSharedFiles(files, serverFolder, (done, total) => {
-        setProgress(`Descargando bloques: ${done} de ${total}...`);
-      });
-      setNotice(`Se descargaron ${count} archivos del grupo a la carpeta del servidor.`);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(false);
-      onTransferBusyChange(false);
-      setProgress('');
-    }
-  };
-
-  const handleDelete = async (file: SharedFileDocument) => {
-    if (!window.confirm(`¿Quitar “${file.relativePath}” de los archivos compartidos del grupo?`)) return;
-    setBusy(true);
-    setError('');
-    try {
-      await deleteSharedFile(groupId, file);
-      await refreshFiles();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'No se pudo quitar el archivo compartido.');
-    } finally {
-      setBusy(false);
+      if (typeof selected === 'string') {
+        onSelectFolder(selected);
+        setNotice('Carpeta local guardada en esta PC. Conecta para sincronizar los archivos del grupo.');
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
     }
   };
 
@@ -171,68 +89,45 @@ export const ShareFilesModal: React.FC<ShareFilesModalProps> = ({
         <div className="flex items-center justify-between pb-4 mb-4 border-b border-slate-800">
           <div className="flex items-center gap-2.5">
             <div className="p-2 bg-cyan-600/20 text-cyan-300 rounded-xl border border-cyan-500/30"><Share2 className="w-5 h-5" /></div>
-            <div>
-              <h3 className="font-bold text-sm text-white">Archivos compartidos del grupo</h3>
-              <p className="text-[11px] text-slate-400">{groupName} · Creado por {ownerName}</p>
-            </div>
+            <div><h3 className="font-bold text-sm text-white">Sincronización P2P del grupo</h3><p className="text-[11px] text-slate-400">{groupName} · Creado por {ownerName}</p></div>
           </div>
           <button onClick={onClose} className="text-slate-500 hover:text-slate-300 text-sm font-bold" aria-label="Cerrar">✕</button>
         </div>
 
         <p className="text-xs text-slate-300 leading-relaxed mb-4">
-          Los miembros pueden compartir y descargar los archivos de su servidor. Se conserva la estructura de carpetas y la transferencia se realiza en bloques de 8 MB para manejar mundos grandes. El espacio disponible y el plan de Firebase determinan cuánto se puede almacenar.
+          Elige la carpeta local de esta PC donde se guardará el servidor del grupo. Cada computadora puede usar una ruta diferente. Syncthing transfiere los archivos directamente entre las PCs; el contenido no se sube a Firebase.
         </p>
-
+        <div className="rounded-xl border border-slate-800 bg-slate-950 p-3 mb-4">
+          <div className="flex flex-wrap items-center gap-2">
+            <FolderOpen className="w-4 h-4 text-cyan-300 flex-shrink-0" />
+            <span className="text-[11px] font-semibold text-slate-300">Carpeta local de esta PC</span>
+            <button onClick={() => void chooseFolder()} disabled={busy} className="ml-auto rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-50 px-3 py-1.5 text-[11px] font-bold text-slate-100">
+              Elegir carpeta…
+            </button>
+          </div>
+          <p className="mt-2 break-all font-mono text-[10px] text-slate-400">{serverFolder || 'No seleccionada'}</p>
+          <p className="mt-1 text-[10px] text-slate-500">La ruta solo se guarda localmente en esta PC. Puedes elegir una diferente en cada computadora.</p>
+        </div>
         <div className="flex flex-wrap gap-2 mb-4">
-          <button disabled={busy || isAutoSyncing || !serverFolder} onClick={handleUpload} className="flex-1 min-w-[190px] py-2.5 px-3 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 disabled:text-slate-500 rounded-xl text-xs font-bold flex items-center justify-center gap-2">
-            <Upload className="w-4 h-4" /> Compartir carpeta del servidor
+          <button disabled={busy || !serverFolder} onClick={() => void handleConnect()} className="flex-1 min-w-[210px] py-2.5 px-3 bg-cyan-700 hover:bg-cyan-600 disabled:bg-slate-800 disabled:text-slate-500 rounded-xl text-xs font-bold flex items-center justify-center gap-2">
+            {busy ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Wifi className="w-4 h-4" />}
+            {busy ? 'Conectando dispositivos…' : 'Conectar / actualizar dispositivos'}
           </button>
-          <button disabled={busy || isAutoSyncing || !serverFolder || !files.length} onClick={handleDownload} className="flex-1 min-w-[190px] py-2.5 px-3 bg-cyan-700 hover:bg-cyan-600 disabled:bg-slate-800 disabled:text-slate-500 rounded-xl text-xs font-bold flex items-center justify-center gap-2">
-            <Download className="w-4 h-4" /> Descargar archivos del grupo
-          </button>
-          <button disabled={busy} onClick={refreshFiles} title="Actualizar lista" className="p-2.5 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 rounded-xl"><RefreshCw className="w-4 h-4" /></button>
         </div>
-
-        {!serverFolder && <p className="text-[11px] text-amber-300 mb-3 flex items-center gap-1.5"><FolderOpen className="w-3.5 h-3.5" /> Selecciona una carpeta local del servidor antes de sincronizar.</p>}
-        <label className="mb-3 flex items-start gap-2 rounded-xl border border-slate-800 bg-slate-950 p-3 text-xs text-slate-300">
-          <input
-            type="checkbox"
-            checked={autoSyncEnabled}
-            disabled={isAutoSyncing || !filesLoaded || (autoSyncEnabled ? false : !serverFolder || !serverIsOffline)}
-            onChange={handleAutoSyncToggle}
-            className="mt-0.5 accent-cyan-500"
-          />
-          <span>
-            <span className="block font-semibold text-slate-200">{filesLoaded ? 'Sincronizar automáticamente en esta PC' : 'Cargando archivos del grupo...'}</span>
-            <span className="mt-1 block text-[10px] text-slate-500">Descarga los archivos del grupo y sus actualizaciones cuando el servidor está apagado. Reemplaza los archivos locales con la misma ruta.</span>
-          </span>
-        </label>
-        {progress && <p className="text-xs text-cyan-300 mb-3">{progress}</p>}
-        {autoSyncProgress && <p className="text-xs text-cyan-300 mb-3">{autoSyncProgress}</p>}
-        {autoSyncError && <p role="alert" className="text-xs text-rose-300 mb-3 break-words">{autoSyncError}</p>}
-        {notice && <p className="text-xs text-emerald-300 mb-3">{notice}</p>}
-        {error && <p className="text-xs text-rose-300 mb-3 break-words">{error}</p>}
-
+        {!serverFolder && <p className="text-[11px] text-amber-300 mb-3">Selecciona una carpeta local del servidor antes de conectar Syncthing.</p>}
+        {deviceId && <div className="rounded-xl border border-slate-800 bg-slate-950 p-3 mb-3">
+          <div className="flex items-center justify-between gap-2"><span className="text-xs font-semibold text-slate-200">ID de esta PC</span><button onClick={() => void copyId()} className="text-cyan-300 hover:text-cyan-200 flex items-center gap-1 text-[11px]"><Copy className="w-3.5 h-3.5" /> Copiar</button></div>
+          <code className="mt-2 block break-all text-[10px] text-slate-400">{deviceId}</code>
+        </div>}
         <div className="bg-slate-950 rounded-xl border border-slate-800 overflow-hidden">
-          <div className="flex justify-between text-[11px] text-slate-400 p-3 border-b border-slate-800">
-            <span>Archivos disponibles para el grupo</span><span>{files.length} archivos</span>
-          </div>
-          <div className="max-h-64 overflow-y-auto divide-y divide-slate-800/70">
-            {files.length ? files.map(file => (
-              <div key={file.id} className="px-3 py-2.5 flex items-center gap-3">
-                <FileText className="w-4 h-4 text-cyan-400 flex-shrink-0" />
-                <div className="min-w-0 flex-1">
-                  <p className="text-xs text-slate-200 truncate" title={file.relativePath}>{file.relativePath}</p>
-                  <p className="text-[10px] text-slate-500">{formatSize(file.sizeBytes)} · Compartido por {file.uploadedByName || 'miembro'}</p>
-                </div>
-                {(file.uploadedBy === currentUser.uid || currentRole === 'owner' || currentRole === 'admin') && (
-                  <button disabled={busy} onClick={() => void handleDelete(file)} title="Quitar del grupo" className="p-1.5 text-slate-500 hover:text-rose-300 disabled:opacity-50"><Trash2 className="w-3.5 h-3.5" /></button>
-                )}
-              </div>
-            )) : <p className="text-xs text-slate-500 text-center py-8">Todavía no se compartieron archivos.</p>}
+          <div className="flex justify-between text-[11px] text-slate-400 p-3 border-b border-slate-800"><span>Dispositivos registrados en el grupo</span><span>{devices.length}</span></div>
+          <div className="max-h-56 overflow-y-auto divide-y divide-slate-800/70">
+            {devices.length ? devices.map(device => <div key={device.deviceId} className="px-3 py-2.5"><p className="text-xs text-slate-200">{device.displayName || 'Miembro'}</p><code className="text-[10px] text-slate-500 break-all">{device.deviceId}</code></div>) : <p className="text-xs text-slate-500 text-center py-6">Pulsa conectar en cada PC que deba participar en este grupo.</p>}
           </div>
         </div>
-        <p className="text-[10px] text-slate-500 mt-3">La descarga reemplaza archivos que ya existan con la misma ruta. Los archivos se guardan en Firebase Storage y solo los miembros del grupo pueden acceder.</p>
+        {notice && <p role="status" className="text-xs text-emerald-300 mt-3">{notice}</p>}
+        {error && <p role="alert" className="text-xs text-rose-300 mt-3 break-words">{error}</p>}
+        <p className="text-[10px] text-slate-500 mt-3">Carpeta local: {serverFolder || 'sin configurar'} · Rol: {currentRole}. Mantén HostShift abierto en ambas PCs; la conexión directa puede requerir una regla de firewall.</p>
       </div>
     </div>
   );

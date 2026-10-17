@@ -25,16 +25,10 @@ export interface GroupDocument {
   activeServerId?: string;    // ID del servidor actualmente configurado
 }
 
-export interface SharedFileDocument {
-  id: string;
-  name: string;
-  relativePath: string;
-  storagePath: string;
-  sizeBytes: number;
-  chunkCount?: number;
-  chunkSize?: number;
-  uploadedBy: string;
-  uploadedByName: string;
+export interface SyncDeviceDocument {
+  deviceId: string;
+  userId: string;
+  displayName: string;
   updatedAt: number;
 }
 

@@ -6,12 +6,17 @@ import {
   AlertCircle,
   Loader2,
   Mail,
-  ShieldCheck,
-  Globe
+  UserPlus
 } from 'lucide-react';
 import { UserDocument } from '../types/schema';
 import { auth, db, googleProvider } from '../services/firebase';
-import { signInWithPopup, signOut, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
+import { 
+  signInWithPopup, 
+  signOut, 
+  onAuthStateChanged, 
+  signInWithEmailAndPassword, 
+  createUserWithEmailAndPassword 
+} from 'firebase/auth';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 
 interface AuthGoogleModalProps {
@@ -26,6 +31,7 @@ export const AuthGoogleModal: React.FC<AuthGoogleModalProps> = ({
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [showEmailFallback, setShowEmailFallback] = useState(false);
+  const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
 
@@ -95,7 +101,7 @@ export const AuthGoogleModal: React.FC<AuthGoogleModalProps> = ({
     } catch (error: any) {
       console.error('Error durante Google Sign-In:', error);
       if (error.code === 'auth/popup-blocked') {
-        setErrorMsg('El WebView de Windows bloqueó la ventana emergente. Puedes usar el inicio con Correo y Contraseña en Firebase aquí abajo.');
+        setErrorMsg('El WebView de Windows bloqueó la ventana emergente. Usa el formulario de abajo.');
         setShowEmailFallback(true);
       } else if (error.code === 'auth/popup-closed-by-user') {
         setErrorMsg('Ventana cerrada antes de completar el inicio de sesión.');
@@ -118,16 +124,10 @@ export const AuthGoogleModal: React.FC<AuthGoogleModalProps> = ({
 
     try {
       let userCredential;
-      try {
-        // Intenta iniciar sesión
-        userCredential = await signInWithEmailAndPassword(auth, email, password);
-      } catch (err: any) {
-        // Si no existe, lo crea automáticamente en tu Firebase
-        if (err.code === 'auth/user-not-found' || err.code === 'auth/invalid-credential') {
-          userCredential = await createUserWithEmailAndPassword(auth, email, password);
-        } else {
-          throw err;
-        }
+      if (authMode === 'login') {
+        userCredential = await signInWithEmailAndPassword(auth, email.trim(), password);
+      } else {
+        userCredential = await createUserWithEmailAndPassword(auth, email.trim(), password);
       }
 
       const user = userCredential.user;
@@ -143,7 +143,20 @@ export const AuthGoogleModal: React.FC<AuthGoogleModalProps> = ({
       localStorage.setItem('hostshift_user', JSON.stringify(userDoc));
       setShowEmailFallback(false);
     } catch (err: any) {
-      setErrorMsg(err.message || 'Error autenticando en Firebase');
+      console.error('Email Auth Error:', err);
+      if (err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential') {
+        setErrorMsg('Contraseña incorrecta o credencial inválida.');
+      } else if (err.code === 'auth/email-already-in-use') {
+        setErrorMsg('Ese correo ya está registrado. Cambia a "Iniciar Sesión" con tu contraseña.');
+        setAuthMode('login');
+      } else if (err.code === 'auth/user-not-found') {
+        setErrorMsg('El usuario no existe. Cambia a la pestaña "Registrarse".');
+        setAuthMode('register');
+      } else if (err.code === 'auth/weak-password') {
+        setErrorMsg('La contraseña debe tener al menos 6 caracteres.');
+      } else {
+        setErrorMsg(err.message || 'Error de autenticación');
+      }
     } finally {
       setLoading(false);
     }
@@ -221,14 +234,24 @@ export const AuthGoogleModal: React.FC<AuthGoogleModalProps> = ({
         <div className="mt-3 p-3 bg-slate-950 border border-slate-800 rounded-xl space-y-2.5 animate-fadeIn">
           <div className="flex items-center justify-between text-xs font-bold text-slate-300">
             <span className="flex items-center gap-1.5">
-              <Mail className="w-3.5 h-3.5 text-indigo-400" /> Firebase Auth Directo
+              <Mail className="w-3.5 h-3.5 text-indigo-400" /> Firebase Auth
             </span>
-            <button
-              onClick={() => setShowEmailFallback(false)}
-              className="text-[10px] text-slate-500 hover:text-slate-300"
-            >
-              Cerrar
-            </button>
+            <div className="flex items-center gap-1 bg-slate-900 p-0.5 rounded-lg border border-slate-800 text-[10px]">
+              <button
+                type="button"
+                onClick={() => { setAuthMode('login'); setErrorMsg(null); }}
+                className={`px-2 py-0.5 rounded ${authMode === 'login' ? 'bg-indigo-600 text-white font-bold' : 'text-slate-400 hover:text-white'}`}
+              >
+                Entrar
+              </button>
+              <button
+                type="button"
+                onClick={() => { setAuthMode('register'); setErrorMsg(null); }}
+                className={`px-2 py-0.5 rounded ${authMode === 'register' ? 'bg-indigo-600 text-white font-bold' : 'text-slate-400 hover:text-white'}`}
+              >
+                Crear
+              </button>
+            </div>
           </div>
           <form onSubmit={handleEmailAuth} className="space-y-2">
             <input
@@ -250,9 +273,16 @@ export const AuthGoogleModal: React.FC<AuthGoogleModalProps> = ({
             <button
               type="submit"
               disabled={loading}
-              className="w-full py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-bold transition-all disabled:opacity-50"
+              className="w-full py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-bold transition-all disabled:opacity-50 flex items-center justify-center gap-1.5"
             >
-              {loading ? 'Accediendo...' : 'Entrar / Registrar en Firebase'}
+              {loading ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : authMode === 'login' ? (
+                <LogIn className="w-3.5 h-3.5" />
+              ) : (
+                <UserPlus className="w-3.5 h-3.5" />
+              )}
+              {loading ? 'Procesando...' : authMode === 'login' ? 'Iniciar Sesión' : 'Registrar Cuenta'}
             </button>
           </form>
         </div>

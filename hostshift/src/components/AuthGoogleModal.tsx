@@ -73,20 +73,36 @@ export const AuthGoogleModal: React.FC<AuthGoogleModalProps> = ({
       }
     });
 
-    // Escuchar si el usuario se autenticó desde el navegador externo (Chrome/Edge)
-    const handleStorageChange = (e: StorageEvent) => {
-      if (e.key === 'hostshift_user' && e.newValue) {
-        try {
-          const syncedUser = JSON.parse(e.newValue);
-          onUserChanged(syncedUser);
-        } catch {}
+    // 1. Canal entre pestañas y navegador
+    const authChannel = new BroadcastChannel('hostshift_auth_sync');
+    authChannel.onmessage = (event) => {
+      if (event.data && event.data.uid) {
+        onUserChanged(event.data);
+        localStorage.setItem('hostshift_user', JSON.stringify(event.data));
       }
     };
-    window.addEventListener('storage', handleStorageChange);
+
+    // 2. Si estamos en la app Tauri, escuchar el evento nativo
+    let unlistenTauri: (() => void) | undefined;
+    (async () => {
+      try {
+        const { listen } = await import('@tauri-apps/api/event');
+        unlistenTauri = await listen<string>('auth-session-synced', (ev) => {
+          try {
+            const user = JSON.parse(ev.payload);
+            onUserChanged(user);
+            localStorage.setItem('hostshift_user', JSON.stringify(user));
+          } catch (e) {
+            console.error('Error parsing synced session:', e);
+          }
+        });
+      } catch {}
+    })();
 
     return () => {
       unsubscribe();
-      window.removeEventListener('storage', handleStorageChange);
+      authChannel.close();
+      if (unlistenTauri) unlistenTauri();
     };
   }, [onUserChanged]);
 
@@ -123,6 +139,18 @@ export const AuthGoogleModal: React.FC<AuthGoogleModalProps> = ({
 
       onUserChanged(userDoc);
       localStorage.setItem('hostshift_user', JSON.stringify(userDoc));
+
+      // Notificar a la app de escritorio y a cualquier otra ventana
+      try {
+        const channel = new BroadcastChannel('hostshift_auth_sync');
+        channel.postMessage(userDoc);
+        channel.close();
+      } catch {}
+
+      try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        await invoke('sync_auth_session', { userJson: JSON.stringify(userDoc) });
+      } catch {}
     } catch (error: any) {
       console.error('Error durante Google Sign-In:', error);
       if (error.code === 'auth/popup-blocked') {

@@ -128,6 +128,13 @@ fn open_external_url(url: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn sync_auth_session(user_json: String, app_handle: tauri::AppHandle) -> Result<(), String> {
+    app_handle.emit("auth-session-synced", user_json)
+        .map_err(|e| format!("Error emitiendo evento de sesión: {}", e))?;
+    Ok(())
+}
+
+#[tauri::command]
 fn greet(name: &str) -> String {
     format!("HostShift Core listo: {}", name)
 }
@@ -148,7 +155,8 @@ pub fn run() {
             start_playit_tunnel,
             stop_playit_tunnel,
             send_command_to_playit,
-            open_external_url
+            open_external_url,
+            sync_auth_session
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

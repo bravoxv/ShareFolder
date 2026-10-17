@@ -23,7 +23,9 @@ import {
   ChevronLeft,
   ChevronRight,
   Share2,
-  GitBranch
+  GitBranch,
+  AlertCircle,
+  CheckCircle2
 } from 'lucide-react';
 import { Role } from './types/models';
 import { UserDocument, GroupDocument } from './types/schema';
@@ -109,6 +111,7 @@ export function App() {
   const [selectedFile, setSelectedFile] = useState<{ name: string; path: string; size: number; content: string } | null>(null);
   const [fileContent, setFileContent] = useState<string>('');
   const [isSaved, setIsSaved] = useState<boolean>(false);
+  const [folderNotification, setFolderNotification] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>('');
 
   const [mockFiles, setMockFiles] = useState([
@@ -132,15 +135,20 @@ export function App() {
   };
 
   // Cargar directorio real desde el disco de Windows mediante Tauri
-  const loadRealDirectory = async (folderPath: string, sub: string = '') => {
-    if (!folderPath.trim()) {
+  const loadRealDirectory = async (folderPath: string, sub: string = '', notify: boolean = false) => {
+    const cleanPath = folderPath.trim();
+    if (!cleanPath) {
       setMockFiles([]);
+      if (notify) {
+        setFolderNotification({ type: 'error', message: 'Ingresa una ruta de carpeta válida primero.' });
+        setTimeout(() => setFolderNotification(null), 4000);
+      }
       return;
     }
 
     try {
       const items = await invoke<any[]>('list_directory_contents', {
-        basePath: folderPath,
+        basePath: cleanPath,
         subDir: sub
       });
       setMockFiles(items.map(item => ({
@@ -150,10 +158,23 @@ export function App() {
         content: ''
       })));
       setCurrentSubDir(sub);
-      setLogs(prev => [...prev, `[Folder] Carpeta leída con éxito: ${folderPath}${sub ? ' / ' + sub : ''} (${items.length} elementos)`]);
+      setLogs(prev => [...prev, `[Folder] Carpeta leída con éxito: ${cleanPath}${sub ? ' / ' + sub : ''} (${items.length} elementos)`]);
+      
+      if (notify) {
+        setFolderNotification({
+          type: 'success',
+          message: `Ruta guardada y cargada con éxito (${items.length} archivos/carpetas encontrados)`
+        });
+        setTimeout(() => setFolderNotification(null), 4000);
+      }
     } catch (err: any) {
       console.warn("Error al leer directorio real:", err);
-      setLogs(prev => [...prev, `[Aviso] ${typeof err === 'string' ? err : 'No se pudo leer la carpeta física.'}`]);
+      const errMsg = typeof err === 'string' ? err : 'No se pudo leer la carpeta física especificada.';
+      setLogs(prev => [...prev, `[Aviso] ${errMsg}`]);
+      if (notify) {
+        setFolderNotification({ type: 'error', message: errMsg });
+        setTimeout(() => setFolderNotification(null), 5000);
+      }
     }
   };
 
@@ -694,13 +715,40 @@ export function App() {
                   <button
                     onClick={() => {
                       localStorage.setItem('hostshift_server_folder', serverFolder);
-                      loadRealDirectory(serverFolder, '');
+                      if (activeGroup) {
+                        GroupService.saveGroupServerConfig(activeGroup.id, { serverFolder });
+                      }
+                      loadRealDirectory(serverFolder, '', true);
                     }}
-                    className="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold px-4 py-2 rounded-lg transition-all flex items-center gap-1.5 flex-shrink-0"
+                    className="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold px-4 py-2 rounded-lg transition-all flex items-center gap-1.5 flex-shrink-0 shadow-md shadow-indigo-900/30 hover:scale-[1.02]"
                   >
                     <RefreshCw className="w-3.5 h-3.5" /> Guardar y Cargar
                   </button>
                 </div>
+
+                {/* Banner de Notificación Visual de Guardado y Carga */}
+                {folderNotification && (
+                  <div className={`px-6 py-2.5 text-xs font-semibold flex items-center justify-between transition-all animate-fadeIn ${
+                    folderNotification.type === 'success'
+                      ? 'bg-emerald-950/60 border-b border-emerald-500/30 text-emerald-300'
+                      : 'bg-rose-950/60 border-b border-rose-500/30 text-rose-300'
+                  }`}>
+                    <div className="flex items-center gap-2">
+                      {folderNotification.type === 'success' ? (
+                        <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+                      ) : (
+                        <AlertCircle className="w-4 h-4 text-rose-400 flex-shrink-0" />
+                      )}
+                      <span>{folderNotification.message}</span>
+                    </div>
+                    <button
+                      onClick={() => setFolderNotification(null)}
+                      className="text-[10px] text-slate-400 hover:text-slate-200 uppercase font-mono px-1.5 py-0.5 rounded bg-slate-900/60"
+                    >
+                      Cerrar
+                    </button>
+                  </div>
+                )}
 
                 {selectedFile ? (
                   /* Editor de Código en Pantalla */

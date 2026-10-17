@@ -6,7 +6,8 @@ import {
   AlertCircle,
   Loader2,
   Mail,
-  UserPlus
+  UserPlus,
+  ExternalLink
 } from 'lucide-react';
 import { UserDocument } from '../types/schema';
 import { auth, db, googleProvider } from '../services/firebase';
@@ -36,7 +37,7 @@ export const AuthGoogleModal: React.FC<AuthGoogleModalProps> = ({
   const [password, setPassword] = useState('');
 
   useEffect(() => {
-    // Escuchar estado real de autenticación de Firebase
+    // Sincronizar cambios de autenticación
     const unsubscribe = onAuthStateChanged(auth, async (fireUser) => {
       if (fireUser) {
         try {
@@ -72,8 +73,27 @@ export const AuthGoogleModal: React.FC<AuthGoogleModalProps> = ({
       }
     });
 
-    return () => unsubscribe();
+    // Escuchar si el usuario se autenticó desde el navegador externo (Chrome/Edge)
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === 'hostshift_user' && e.newValue) {
+        try {
+          const syncedUser = JSON.parse(e.newValue);
+          onUserChanged(syncedUser);
+        } catch {}
+      }
+    };
+    window.addEventListener('storage', handleStorageChange);
+
+    return () => {
+      unsubscribe();
+      window.removeEventListener('storage', handleStorageChange);
+    };
   }, [onUserChanged]);
+
+  const handleOpenBrowserLogin = () => {
+    // Abre el navegador real del usuario (Chrome, Edge, etc.) donde Google nunca bloquea el login
+    window.open('http://localhost:1420', '_blank');
+  };
 
   const handleGoogleSignIn = async () => {
     setErrorMsg(null);
@@ -101,15 +121,13 @@ export const AuthGoogleModal: React.FC<AuthGoogleModalProps> = ({
     } catch (error: any) {
       console.error('Error durante Google Sign-In:', error);
       if (error.code === 'auth/popup-blocked') {
-        setErrorMsg('El WebView de Windows bloqueó la ventana emergente. Usa el formulario de abajo.');
-        setShowEmailFallback(true);
+        setErrorMsg('El WebView de la app bloqueó la ventana emergente de Google.');
       } else if (error.code === 'auth/popup-closed-by-user') {
         setErrorMsg('Ventana cerrada antes de completar el inicio de sesión.');
       } else if (error.code === 'auth/unauthorized-domain') {
         setErrorMsg('Dominio no autorizado en Firebase. Añade localhost a los dominios autorizados de Auth.');
       } else {
         setErrorMsg(error.message || 'Error al autenticarse con Google');
-        setShowEmailFallback(true);
       }
     } finally {
       setLoading(false);
@@ -199,6 +217,7 @@ export const AuthGoogleModal: React.FC<AuthGoogleModalProps> = ({
         </div>
       ) : (
         <div className="space-y-2">
+          {/* Botón directo de Google con ventana emergente */}
           <button
             onClick={handleGoogleSignIn}
             disabled={loading}
@@ -212,12 +231,22 @@ export const AuthGoogleModal: React.FC<AuthGoogleModalProps> = ({
             {loading ? 'Conectando...' : 'Iniciar Sesión con Google'}
           </button>
 
+          {/* Solución Oficial: Abrir en Navegador (Chrome / Edge) */}
+          <button
+            onClick={handleOpenBrowserLogin}
+            type="button"
+            className="w-full py-1.5 px-2 bg-slate-900 hover:bg-slate-800 text-indigo-400 border border-slate-800 rounded-lg text-[11px] font-medium flex items-center justify-center gap-1.5 transition-colors"
+          >
+            <ExternalLink className="w-3.5 h-3.5" />
+            Abrir en Navegador (Chrome / Edge)
+          </button>
+
           {!showEmailFallback && (
             <button
               onClick={() => setShowEmailFallback(true)}
               className="w-full text-center text-[10px] text-slate-500 hover:text-slate-400 transition-colors py-0.5"
             >
-              ¿Ventana emergente bloqueada? Iniciar con Correo / Firebase
+              ¿Prefieres usar Correo y Contraseña?
             </button>
           )}
         </div>

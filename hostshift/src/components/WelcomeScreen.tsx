@@ -12,7 +12,8 @@ import {
   Copy,
   FolderOpen,
   UserPlus,
-  Globe
+  Globe,
+  LogOut
 } from 'lucide-react';
 import { UserDocument, GroupDocument } from '../types/schema';
 import { GroupService } from '../services/groupService';
@@ -151,6 +152,18 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
     }
   };
 
+  // Desloguear de la cuenta de Google
+  const handleLogout = async () => {
+    try {
+      await GroupService.logout();
+    } catch (err) {
+      console.warn('Error en GroupService.logout():', err);
+    }
+    localStorage.removeItem('hostshift_user');
+    localStorage.removeItem('hostshift_active_group');
+    onUserChanged(null);
+  };
+
   return (
     <div className="min-h-screen w-screen bg-slate-950 text-slate-100 flex items-center justify-center p-6 relative overflow-hidden">
       {/* Luces y degradados decorativos de fondo */}
@@ -285,16 +298,26 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
                 </div>
               </div>
 
-              {isBrowser && (
+              <div className="flex items-center gap-2">
+                {isBrowser && (
+                  <button
+                    onClick={handleCopyBrowserSession}
+                    title="Copiar código para llevarlo a la app de escritorio"
+                    className="px-2.5 py-1.5 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-400 border border-emerald-500/30 rounded-lg text-[10px] font-bold flex items-center gap-1.5 transition-all"
+                  >
+                    <Copy className="w-3 h-3" />
+                    {copiedCode ? '¡Copiado!' : 'Copiar a la App'}
+                  </button>
+                )}
                 <button
-                  onClick={handleCopyBrowserSession}
-                  title="Copiar código para llevarlo a la app de escritorio"
-                  className="px-2.5 py-1.5 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-400 border border-emerald-500/30 rounded-lg text-[10px] font-bold flex items-center gap-1.5 transition-all"
+                  onClick={handleLogout}
+                  title="Cerrar sesión de Google"
+                  className="px-2.5 py-1.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 rounded-lg text-[10px] font-bold flex items-center gap-1 transition-all"
                 >
-                  <Copy className="w-3 h-3" />
-                  {copiedCode ? '¡Copiado!' : 'Copiar a la App'}
+                  <LogOut className="w-3 h-3" />
+                  Salir
                 </button>
-              )}
+              </div>
             </div>
 
             {/* Selector de Pestaña: Crear Grupo vs Unirse a Grupo */}

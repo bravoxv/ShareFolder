@@ -31,6 +31,7 @@ import { AuthGoogleModal } from './components/AuthGoogleModal';
 import { ShareFilesModal } from './components/ShareFilesModal';
 import { WelcomeScreen } from './components/WelcomeScreen';
 import { GitUpdaterModal } from './components/GitUpdaterModal';
+import { GroupService } from './services/groupService';
 
 export function App() {
   const [role, setRole] = useState<Role>('owner');
@@ -343,14 +344,28 @@ export function App() {
             setLogs(prev => [...prev, `[Auth] Sesión activa con Google: ${user.displayName}`]);
           }
         }}
-        onGroupSelected={(group) => {
+        onGroupSelected={(group, assignedRole) => {
           setActiveGroup(group);
           setGroupName(group.name);
-          setRole('owner');
+          const userRole = (assignedRole as Role) || 'owner';
+          setRole(userRole);
+
+          // Cargar configuración de servidor asociada a este grupo específico
+          const groupCfg = GroupService.getGroupServerConfig(group.id);
+          if (groupCfg.serverFolder) {
+            setServerFolder(groupCfg.serverFolder);
+            localStorage.setItem('hostshift_server_folder', groupCfg.serverFolder);
+            loadRealDirectory(groupCfg.serverFolder, '');
+          }
+          if (groupCfg.launcherFile) {
+            setLauncherFile(groupCfg.launcherFile);
+            localStorage.setItem('hostshift_launcher_file', groupCfg.launcherFile);
+          }
+
           setLogs(prev => [
             ...prev, 
-            `[Grupo] Grupo '${group.name}' activado con éxito.`,
-            `[Rol] Asignado como Propietario (Owner) legítimo en Firebase.`
+            `[Grupo] Servidor/Grupo '${group.name}' activado con éxito.`,
+            `[Rol] Asignado como ${userRole.toUpperCase()} en este servidor.`
           ]);
         }}
       />
@@ -670,6 +685,9 @@ export function App() {
                       const val = e.target.value;
                       setServerFolder(val);
                       localStorage.setItem('hostshift_server_folder', val);
+                      if (activeGroup) {
+                        GroupService.saveGroupServerConfig(activeGroup.id, { serverFolder: val });
+                      }
                     }}
                     className="w-full bg-slate-900 border border-slate-700 text-xs font-mono text-slate-200 px-3 py-2 rounded-lg outline-none focus:border-indigo-500 placeholder-slate-600"
                   />
@@ -789,6 +807,9 @@ export function App() {
                                       const path = currentSubDir ? `${currentSubDir}\\${item.name}` : item.name;
                                       setLauncherFile(path);
                                       localStorage.setItem('hostshift_launcher_file', path);
+                                      if (activeGroup) {
+                                        GroupService.saveGroupServerConfig(activeGroup.id, { launcherFile: path });
+                                      }
                                       setLogs(prev => [...prev, `[Iniciador] Seleccionado '${path}' como programa de arranque del servidor.`]);
                                     }}
                                     className={`text-[11px] px-2.5 py-1 rounded font-bold transition-all ${

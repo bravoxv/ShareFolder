@@ -13,7 +13,11 @@ import {
   FolderOpen,
   UserPlus,
   Globe,
-  LogOut
+  LogOut,
+  Server,
+  Trash2,
+  ChevronRight,
+  Play
 } from 'lucide-react';
 import { UserDocument, GroupDocument } from '../types/schema';
 import { GroupService } from '../services/groupService';
@@ -33,10 +37,13 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'create' | 'join'>('create');
   const [groupNameInput, setGroupNameInput] = useState('');
+  const [serverFolderInput, setServerFolderInput] = useState('');
+  const [launcherFileInput, setLauncherFileInput] = useState('');
   const [joinInput, setJoinInput] = useState('');
   const [showCodeInput, setShowCodeInput] = useState(false);
   const [sessionCodeInput, setSessionCodeInput] = useState('');
   const [copiedCode, setCopiedCode] = useState(false);
+  const [myGroups, setMyGroups] = useState(() => GroupService.getUserGroups());
 
   const isBrowser = !window.__TAURI_INTERNALS__;
 
@@ -111,6 +118,16 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
         };
       }
 
+      // Si el usuario especificó una carpeta o ejecutable para este servidor, asociarlo
+      if (serverFolderInput.trim() || launcherFileInput.trim()) {
+        GroupService.saveGroupServerConfig(createdGroup.id, {
+          serverFolder: serverFolderInput.trim(),
+          launcherFile: launcherFileInput.trim()
+        });
+      }
+
+      GroupService.saveUserGroup(createdGroup, 'owner');
+      setMyGroups(GroupService.getUserGroups());
       localStorage.setItem('hostshift_active_group', JSON.stringify(createdGroup));
       onGroupSelected(createdGroup, 'owner');
     } catch (err: any) {
@@ -140,6 +157,8 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
     try {
       const res = await GroupService.joinGroup(input, currentUser);
       if (res.success && res.group) {
+        GroupService.saveUserGroup(res.group, res.role || 'player');
+        setMyGroups(GroupService.getUserGroups());
         localStorage.setItem('hostshift_active_group', JSON.stringify(res.group));
         onGroupSelected(res.group, res.role || 'player');
       } else {
@@ -320,6 +339,93 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
               </div>
             </div>
 
+            {/* LISTA DE GRUPOS Y SERVIDORES DEL USUARIO */}
+            {myGroups.length > 0 && (
+              <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-slate-200 flex items-center gap-1.5">
+                    <Server className="w-4 h-4 text-cyan-400" /> Servidores y Grupos Configurados ({myGroups.length})
+                  </span>
+                  <span className="text-[10px] text-slate-500 font-medium">Selecciona uno para abrirlo</span>
+                </div>
+
+                <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                  {myGroups.map(({ group, role }) => {
+                    const cfg = GroupService.getGroupServerConfig(group.id);
+                    return (
+                      <div
+                        key={group.id}
+                        className="group flex items-center justify-between p-3 rounded-xl bg-slate-900/90 hover:bg-slate-850 border border-slate-800 hover:border-cyan-500/40 transition-all cursor-pointer shadow-sm hover:shadow-cyan-950/20"
+                        onClick={() => {
+                          localStorage.setItem('hostshift_active_group', JSON.stringify(group));
+                          onGroupSelected(group, role);
+                        }}
+                      >
+                        <div className="flex-1 min-w-0 pr-3">
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className="text-xs font-bold text-slate-100 group-hover:text-cyan-300 transition-colors truncate">
+                              {group.name}
+                            </span>
+                            <span className={`text-[9px] px-1.5 py-0.5 rounded font-mono uppercase font-bold tracking-wider ${
+                              role === 'owner' 
+                                ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' 
+                                : 'bg-slate-800 text-slate-400 border border-slate-700'
+                            }`}>
+                              {role}
+                            </span>
+                          </div>
+
+                          {/* Detalles de la configuración guardada del servidor */}
+                          <div className="space-y-0.5 text-[10px] text-slate-400 font-mono">
+                            {cfg.serverFolder ? (
+                              <div className="flex items-center gap-1 text-indigo-300 truncate">
+                                <FolderOpen className="w-3 h-3 text-indigo-400 flex-shrink-0" />
+                                <span className="truncate">{cfg.serverFolder}</span>
+                              </div>
+                            ) : (
+                              <div className="text-slate-500 italic">Sin carpeta local asignada</div>
+                            )}
+
+                            {cfg.launcherFile && (
+                              <div className="flex items-center gap-1 text-emerald-400 font-semibold truncate">
+                                <Play className="w-2.5 h-2.5 flex-shrink-0" />
+                                <span>Iniciador: {cfg.launcherFile}</span>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-1.5 flex-shrink-0">
+                          <button
+                            type="button"
+                            title="Entrar a este grupo y cargar su servidor"
+                            className="px-2.5 py-1.5 bg-cyan-600/20 hover:bg-cyan-600/30 text-cyan-300 border border-cyan-500/30 rounded-lg text-xs font-bold flex items-center gap-1 transition-all"
+                          >
+                            <span>Abrir</span>
+                            <ChevronRight className="w-3.5 h-3.5" />
+                          </button>
+
+                          <button
+                            type="button"
+                            title="Quitar de mi lista"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              const updated = myGroups.filter(item => item.group.id !== group.id);
+                              localStorage.setItem('hostshift_my_groups', JSON.stringify(updated));
+                              setMyGroups(updated);
+                            }}
+                            className="p-1.5 text-slate-600 hover:text-rose-400 opacity-30 group-hover:opacity-100 transition-all rounded hover:bg-rose-500/10"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             {/* Selector de Pestaña: Crear Grupo vs Unirse a Grupo */}
             <div className="flex bg-slate-950 p-1 rounded-2xl border border-slate-800">
               <button
@@ -331,7 +437,7 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
                     : 'text-slate-400 hover:text-slate-200'
                 }`}
               >
-                <PlusCircle className="w-3.5 h-3.5" /> Crear Grupo
+                <PlusCircle className="w-3.5 h-3.5" /> Crear Nuevo Grupo
               </button>
               <button
                 type="button"
@@ -352,24 +458,53 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
                 <div>
                   <label className="text-xs text-slate-300 font-semibold block mb-1.5 flex items-center gap-1.5">
                     <Users className="w-4 h-4 text-cyan-400" />
-                    Nombre del Nuevo Grupo Privado:
+                    Nombre del Servidor / Grupo:
                   </label>
                   <input
                     type="text"
                     required
-                    placeholder="Ej: Los Pibes Gaming, Survival Squad..."
+                    placeholder="Ej: Minecraft Survival, Valheim Squad, Palworld..."
                     value={groupNameInput}
                     onChange={(e) => setGroupNameInput(e.target.value)}
                     className="w-full bg-slate-950 border border-slate-700 text-xs font-semibold text-slate-100 px-3.5 py-2.5 rounded-xl outline-none focus:border-cyan-500 placeholder-slate-600"
                   />
                 </div>
 
+                {/* Carpeta local y archivo iniciador para este servidor (opcional) */}
+                <div className="space-y-3 p-3.5 bg-slate-950/60 rounded-xl border border-slate-800">
+                  <div>
+                    <label className="text-[11px] text-slate-400 font-medium block mb-1 flex items-center gap-1">
+                      <FolderOpen className="w-3.5 h-3.5 text-indigo-400" /> Carpeta del juego/servidor (opcional):
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="Ej: C:\Servidores\MiMinecraft o D:\Juegos\ServerValheim"
+                      value={serverFolderInput}
+                      onChange={(e) => setServerFolderInput(e.target.value)}
+                      className="w-full bg-slate-900 border border-slate-700 text-xs font-mono text-slate-200 px-3 py-2 rounded-lg outline-none focus:border-indigo-500 placeholder-slate-600"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-[11px] text-slate-400 font-medium block mb-1 flex items-center gap-1">
+                      <Server className="w-3.5 h-3.5 text-cyan-400" /> Archivo Iniciador (.bat / .exe / .jar) (opcional):
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="Ej: run.bat o start.bat o Server.exe"
+                      value={launcherFileInput}
+                      onChange={(e) => setLauncherFileInput(e.target.value)}
+                      className="w-full bg-slate-900 border border-slate-700 text-xs font-mono text-slate-200 px-3 py-2 rounded-lg outline-none focus:border-indigo-500 placeholder-slate-600"
+                    />
+                  </div>
+                </div>
+
                 <div className="p-3 bg-indigo-950/20 border border-indigo-500/20 rounded-xl text-[11px] text-slate-400 space-y-1">
                   <div className="flex items-center gap-1.5 text-indigo-300 font-semibold">
-                    <Sparkles className="w-3.5 h-3.5 text-indigo-400" /> Rol Automático
+                    <Sparkles className="w-3.5 h-3.5 text-indigo-400" /> Propietario Legítimo
                   </div>
                   <p>
-                    Tu cuenta <strong>{currentUser.displayName}</strong> será registrada en Firebase como el <strong>Propietario Legítimo</strong> con control total de permisos.
+                    Tu cuenta <strong>{currentUser.displayName}</strong> será registrada en Firebase como el <strong>Owner</strong> con control total de este servidor.
                   </p>
                 </div>
 
@@ -383,7 +518,7 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
                   ) : (
                     <PlusCircle className="w-4 h-4" />
                   )}
-                  {loading ? 'Creando Grupo en Firebase...' : 'Crear Grupo y Entrar al Panel'}
+                  {loading ? 'Creando Grupo en Firebase...' : 'Crear Servidor/Grupo y Entrar'}
                 </button>
               </form>
             ) : (

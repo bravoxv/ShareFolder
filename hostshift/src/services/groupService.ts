@@ -11,7 +11,11 @@ import {
   doc, 
   setDoc, 
   getDoc, 
-  runTransaction 
+  runTransaction,
+  collection,
+  query,
+  where,
+  getDocs
 } from 'firebase/firestore';
 import { 
   GroupDocument, 
@@ -235,5 +239,69 @@ export class GroupService {
     };
 
     return { success: true, group: fallbackGroup, role: 'player' };
+  }
+
+  /**
+   * Registra un grupo en la lista local del usuario (para acceso rápido multi-grupo)
+   */
+  static saveUserGroup(group: GroupDocument, role: string = 'owner') {
+    try {
+      const storageKey = 'hostshift_my_groups';
+      const existing: Array<{ group: GroupDocument; role: string; lastUsed: number }> = 
+        JSON.parse(localStorage.getItem(storageKey) || '[]');
+      
+      const filtered = existing.filter(item => item.group.id !== group.id);
+      filtered.unshift({
+        group,
+        role,
+        lastUsed: Date.now()
+      });
+
+      localStorage.setItem(storageKey, JSON.stringify(filtered));
+    } catch (e) {
+      console.warn('Error guardando grupo en lista local:', e);
+    }
+  }
+
+  /**
+   * Obtiene la lista de grupos asociados al usuario (creados o unidos)
+   */
+  static getUserGroups(): Array<{ group: GroupDocument; role: string; lastUsed: number }> {
+    try {
+      const storageKey = 'hostshift_my_groups';
+      return JSON.parse(localStorage.getItem(storageKey) || '[]');
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Guarda la configuración de servidor asociada a un grupo específico
+   * (carpeta en disco, ejecutable/launcher, etc.)
+   */
+  static saveGroupServerConfig(
+    groupId: string,
+    config: { serverFolder?: string; launcherFile?: string; playitExe?: string }
+  ) {
+    try {
+      const key = `hostshift_cfg_${groupId}`;
+      const prev = JSON.parse(localStorage.getItem(key) || '{}');
+      const updated = { ...prev, ...config, updatedAt: Date.now() };
+      localStorage.setItem(key, JSON.stringify(updated));
+    } catch (e) {
+      console.warn('Error guardando config de servidor para grupo:', e);
+    }
+  }
+
+  /**
+   * Recupera la configuración de servidor propia de un grupo
+   */
+  static getGroupServerConfig(groupId: string): { serverFolder?: string; launcherFile?: string; playitExe?: string } {
+    try {
+      const key = `hostshift_cfg_${groupId}`;
+      return JSON.parse(localStorage.getItem(key) || '{}');
+    } catch {
+      return {};
+    }
   }
 }

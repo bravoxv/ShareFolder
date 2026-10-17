@@ -42,54 +42,56 @@ if exist "%SCRIPT_DIR%hostshift\src-tauri\target\release\hostshift.exe" (
 REM ========================================================
 REM  2. Si existe la version compilada oficial, ejecutarla directamente
 REM ========================================================
-if defined EXE_PATH (
-    if exist "!EXE_PATH!" (
-        echo [OK] Ejecutable empaquetado detectado:
-        echo      !EXE_PATH!
-        echo [OK] Ejecutable detectado: !EXE_PATH! >> "%LOG_FILE%"
-        echo.
-        
-        REM Verificacion REAL y certera de WebView2 (Registro y Archivo fisico)
-        echo [*] Verificando Microsoft Edge WebView2 Runtime...
-        echo [*] Verificando Microsoft Edge WebView2 Runtime... >> "%LOG_FILE%"
-        set "TIENE_WV="
-        reg query "HKLM\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\Microsoft EdgeWebView" >nul 2>&1
-        if not errorlevel 1 set "TIENE_WV=1"
-        reg query "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Microsoft EdgeWebView" >nul 2>&1
-        if not errorlevel 1 set "TIENE_WV=1"
-        if exist "%ProgramFiles(x86)%\Microsoft\EdgeWebView\Application" set "TIENE_WV=1"
-        if exist "%ProgramFiles%\Microsoft\EdgeWebView\Application" set "TIENE_WV=1"
+if not defined EXE_PATH goto :modo_desarrollo
+if not exist "!EXE_PATH!" goto :modo_desarrollo
 
-        if not defined TIENE_WV (
-            echo [AVISO] No se detecto Microsoft Edge WebView2 Runtime.
-            echo [AVISO] WebView2 no detectado en el sistema >> "%LOG_FILE%"
-            echo HostShift requiere WebView2 para mostrar la interfaz grafica.
-            set /p INST_WV="Deseas descargarlo e instalarlo automaticamente ahora? (S/N): "
-            if /i "!INST_WV!"=="S" (
-                echo Instalando WebView2 via winget...
-                echo [*] Ejecutando winget install WebView2... >> "%LOG_FILE%"
-                winget install --id Microsoft.EdgeWebView2Runtime -e --accept-source-agreements --accept-package-agreements >> "%LOG_FILE%" 2>&1
-            ) else (
-                echo [ERROR] Instalacion de WebView2 cancelada por el usuario. >> "%LOG_FILE%"
-                goto :fin_pausa
-            )
-        ) else (
-            echo [OK] WebView2 Runtime detectado correctamente.
-            echo [OK] WebView2 detectado. >> "%LOG_FILE%"
-        )
-        
-        echo [*] Lanzando proceso HostShift...
-        echo [*] Lanzando proceso: "!EXE_PATH!" >> "%LOG_FILE%"
-        start "" "!EXE_PATH!"
-        echo [EXITO] Proceso iniciado correctamente. >> "%LOG_FILE%"
-        ping -n 2 127.0.0.1 >nul
-        exit /b 0
+echo [OK] Ejecutable empaquetado detectado:
+echo      !EXE_PATH!
+echo [OK] Ejecutable detectado: !EXE_PATH! >> "%LOG_FILE%"
+echo.
+
+REM Verificacion REAL y certera de WebView2 (sin anidar parentesis peligrosos)
+echo [*] Verificando Microsoft Edge WebView2 Runtime...
+echo [*] Verificando Microsoft Edge WebView2 Runtime... >> "%LOG_FILE%"
+set "TIENE_WV="
+reg query "HKLM\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\Microsoft EdgeWebView" >nul 2>&1
+if not errorlevel 1 set "TIENE_WV=1"
+reg query "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Microsoft EdgeWebView" >nul 2>&1
+if not errorlevel 1 set "TIENE_WV=1"
+
+set "PF86=%ProgramFiles(x86)%"
+if exist "!PF86!\Microsoft\EdgeWebView\Application" set "TIENE_WV=1"
+if exist "%ProgramFiles%\Microsoft\EdgeWebView\Application" set "TIENE_WV=1"
+
+if defined TIENE_WV (
+    echo [OK] WebView2 Runtime detectado correctamente.
+    echo [OK] WebView2 detectado. >> "%LOG_FILE%"
+) else (
+    echo [AVISO] No se detecto Microsoft Edge WebView2 Runtime.
+    echo [AVISO] WebView2 no detectado en el sistema >> "%LOG_FILE%"
+    echo HostShift requiere WebView2 para mostrar la interfaz grafica.
+    set /p INST_WV="Deseas descargarlo e instalarlo automaticamente ahora? [S/N]: "
+    if /i "!INST_WV!"=="S" (
+        echo Instalando WebView2 via winget...
+        echo [*] Ejecutando winget install WebView2... >> "%LOG_FILE%"
+        winget install --id Microsoft.EdgeWebView2Runtime -e --accept-source-agreements --accept-package-agreements >> "%LOG_FILE%" 2>&1
+    ) else (
+        echo [ERROR] Instalacion de WebView2 cancelada por el usuario. >> "%LOG_FILE%"
+        goto :fin_pausa
     )
 )
+
+echo [*] Lanzando proceso HostShift...
+echo [*] Lanzando proceso: "!EXE_PATH!" >> "%LOG_FILE%"
+start "" "!EXE_PATH!"
+echo [EXITO] Proceso iniciado correctamente. >> "%LOG_FILE%"
+ping -n 2 127.0.0.1 >nul
+exit /b 0
 
 REM ========================================================
 REM  3. Modo Desarrollo (Fallback si no hay version compilada)
 REM ========================================================
+:modo_desarrollo
 echo.
 echo ========================================================
 echo  No se encontro version compilada directa.
@@ -122,11 +124,11 @@ if errorlevel 1 (
 )
 for /f "tokens=*" %%v in ('node -v 2^>nul') do echo [OK] Node.js detectado: %%v >> "%LOG_FILE%"
 
-REM Validar Cargo / Rust
+REM Validar Cargo / Rust (sin parentesis sueltos dentro del bloque)
 where cargo >nul 2>&1
 if errorlevel 1 (
-    echo [FALTA] Rust (cargo) no esta instalado.
-    echo [FALTA] Rust (cargo) no detectado >> "%LOG_FILE%"
+    echo [FALTA] Rust - cargo no esta instalado.
+    echo [FALTA] Rust - cargo no detectado >> "%LOG_FILE%"
     echo Descargalo de: https://rustup.rs/
     goto :fin_pausa
 )

@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import { 
   Users, 
   PlusCircle, 
-  LogIn, 
   Sparkles, 
   ShieldCheck, 
   Loader2, 
@@ -15,7 +14,10 @@ import {
   Trash2,
   ChevronRight,
   GitBranch,
+  ExternalLink,
+  KeyRound,
 } from 'lucide-react';
+import { invoke } from '@tauri-apps/api/core';
 import { UserDocument, GroupDocument } from '../types/schema';
 import { GroupService } from '../services/groupService';
 
@@ -37,7 +39,42 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
   const [activeTab, setActiveTab] = useState<'create' | 'join'>('create');
   const [groupNameInput, setGroupNameInput] = useState('');
   const [joinInput, setJoinInput] = useState('');
+  const [showCodeInput, setShowCodeInput] = useState(false);
+  const [sessionCodeInput, setSessionCodeInput] = useState('');
   const [myGroups, setMyGroups] = useState(() => GroupService.getUserGroups());
+
+  const handleBrowserSignIn = async () => {
+    setLoading(true);
+    setErrorMsg(null);
+    try {
+      await invoke('open_external_url', { url: 'browser_login.html' });
+    } catch (error: any) {
+      setErrorMsg(error.message || 'No se pudo abrir el navegador.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleApplySessionCode = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setErrorMsg(null);
+    try {
+      const parsed = JSON.parse(atob(sessionCodeInput.trim()));
+      if (typeof parsed?.googleAccessToken !== 'string') {
+        throw new Error('El código no es válido. Inicia sesión de nuevo en el navegador y copia el código nuevo.');
+      }
+      const user = await GroupService.loginWithGoogleAccessToken(parsed.googleAccessToken);
+      localStorage.setItem('hostshift_user', JSON.stringify(user));
+      onUserChanged(user);
+      setSessionCodeInput('');
+      setShowCodeInput(false);
+    } catch (error: any) {
+      setErrorMsg(error.message || 'No se pudo vincular la sesión de Google.');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   // Crear grupo oficial en Firestore y asignar al usuario actual como Propietario (Owner)
   const handleCreateGroup = async (e: React.FormEvent) => {
@@ -188,33 +225,43 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
 
               <div className="space-y-3 pt-1">
                 <button
-                  onClick={async () => {
-                    setLoading(true);
-                    setErrorMsg(null);
-                    try {
-                      const user = await GroupService.loginWithGoogle();
-                      onUserChanged(user);
-                    } catch (err: any) {
-                      console.error('Google Sign-In Error:', err);
-                      if (err.code === 'auth/popup-closed-by-user') {
-                        setErrorMsg('Ventana de Google cerrada antes de completar el inicio de sesión.');
-                      } else if (err.code === 'auth/popup-blocked') {
-                        setErrorMsg('El navegador interno bloqueó la ventana emergente de Google. Puedes ingresar directamente con Correo/Contraseña abajo o pegar el código.');
-                      } else if (err.code === 'auth/unauthorized-domain') {
-                        setErrorMsg('Firebase no autoriza este dominio local. En Firebase Console > Authentication > Settings > Authorized domains, añade 127.0.0.1 y localhost; reinicia el inicio de sesión después.');
-                      } else {
-                        setErrorMsg(err.message || 'Error al iniciar sesión con Google.');
-                      }
-                    } finally {
-                      setLoading(false);
-                    }
-                  }}
+                  onClick={handleBrowserSignIn}
                   disabled={loading}
                   className="w-full py-3 px-4 bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-500 hover:to-indigo-600 text-white rounded-xl text-xs font-bold shadow-lg shadow-indigo-900/30 flex items-center justify-center gap-2 transition-all hover:scale-[1.02]"
                 >
-                  {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <LogIn className="w-4 h-4" />}
-                  {loading ? 'Conectando con Google...' : 'Iniciar Sesión con Google'}
+                  {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <ExternalLink className="w-4 h-4" />}
+                  {loading ? 'Abriendo navegador...' : 'Iniciar sesión por navegador'}
                 </button>
+
+                {!showCodeInput ? (
+                  <button
+                    type="button"
+                    onClick={() => setShowCodeInput(true)}
+                    className="text-xs text-emerald-400 hover:text-emerald-300 font-medium py-1 flex items-center justify-center gap-1.5 mx-auto transition-colors"
+                  >
+                    <KeyRound className="w-3.5 h-3.5" />
+                    ¿Ya iniciaste sesión? Pegar código
+                  </button>
+                ) : (
+                  <form onSubmit={handleApplySessionCode} className="space-y-2 text-left">
+                    <input
+                      type="text"
+                      required
+                      placeholder="Pega aquí el código del navegador..."
+                      value={sessionCodeInput}
+                      onChange={(e) => setSessionCodeInput(e.target.value)}
+                      className="w-full bg-slate-900 border border-slate-700 text-xs font-mono text-slate-200 px-3 py-2 rounded-xl outline-none focus:border-emerald-500"
+                    />
+                    <div className="flex gap-2">
+                      <button type="submit" disabled={loading} className="flex-1 py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-lg text-xs font-bold">
+                        {loading ? 'Vinculando...' : 'Vincular sesión'}
+                      </button>
+                      <button type="button" onClick={() => setShowCodeInput(false)} className="px-3 py-1.5 bg-slate-800 text-slate-400 rounded-lg text-xs">
+                        Cancelar
+                      </button>
+                    </div>
+                  </form>
+                )}
 
                 {/* Formulario alternativo de Correo / Contraseña */}
                 <div className="border-t border-slate-800/80 pt-3 mt-2">

@@ -13,9 +13,7 @@ import { invoke } from '@tauri-apps/api/core';
 
 interface GitUpdateStatus {
   has_updates: boolean;
-  current_commit: string;
-  remote_commit: string;
-  modified_files: string[];
+  changed_files: string[];
 }
 
 interface GitUpdateResult {
@@ -71,7 +69,7 @@ export const GitUpdaterModal: React.FC<GitUpdaterModalProps> = ({
       });
       setResult(updateResult);
       if (updateResult.success) {
-        setStatus(prev => prev ? { ...prev, has_updates: false } : null);
+        setStatus(prev => prev ? { ...prev, has_updates: false, changed_files: [] } : null);
         if (onUpdateApplied) {
           onUpdateApplied();
         }
@@ -95,8 +93,8 @@ export const GitUpdaterModal: React.FC<GitUpdaterModalProps> = ({
               <GitBranch className="w-6 h-6" />
             </div>
             <div>
-              <h3 className="font-bold text-base text-white">Actualizador Inteligente de GitHub</h3>
-              <p className="text-xs text-slate-400">Descarga e integra únicamente los archivos que cambiaron</p>
+              <h3 className="font-bold text-base text-white">Actualizaciones de GitHub</h3>
+              <p className="text-xs text-slate-400">Detecta archivos nuevos, modificados o eliminados</p>
             </div>
           </div>
           <button
@@ -123,9 +121,17 @@ export const GitUpdaterModal: React.FC<GitUpdaterModalProps> = ({
               <span>{result.message}</span>
             </div>
             {result.updated_files.length > 0 && (
-              <p className="text-[11px] text-emerald-200">
-                Se actualizaron {result.updated_files.length} archivos en tu disco sin descargar el proyecto completo.
-              </p>
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-[11px] text-emerald-200">
+                  Se actualizaron {result.updated_files.length} archivo(s).
+                </p>
+                <button
+                  onClick={() => window.location.reload()}
+                  className="shrink-0 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-[11px] font-bold transition-colors"
+                >
+                  Recargar ahora
+                </button>
+              </div>
             )}
           </div>
         )}
@@ -135,24 +141,11 @@ export const GitUpdaterModal: React.FC<GitUpdaterModalProps> = ({
           {!status ? (
             <div className="bg-slate-950 p-5 rounded-2xl border border-slate-800 text-center space-y-2">
               <p className="text-xs text-slate-400">
-                Haz clic abajo para comparar tu versión local con el repositorio remoto de GitHub (<strong>bravoxv/ShareFolder</strong>).
+                Haz clic abajo para comparar los archivos locales con los de GitHub (<strong>bravoxv/ShareFolder</strong>).
               </p>
             </div>
           ) : (
             <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800 space-y-3">
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-slate-400">Commit actual:</span>
-                <span className="font-mono text-indigo-400 font-bold bg-slate-900 px-2 py-0.5 rounded border border-slate-800">
-                  {status.current_commit}
-                </span>
-              </div>
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-slate-400">Último commit en GitHub:</span>
-                <span className="font-mono text-cyan-400 font-bold bg-slate-900 px-2 py-0.5 rounded border border-slate-800">
-                  {status.remote_commit}
-                </span>
-              </div>
-
               <div className="pt-2 border-t border-slate-800/80">
                 {status.has_updates ? (
                   <div className="space-y-2">
@@ -161,12 +154,12 @@ export const GitUpdaterModal: React.FC<GitUpdaterModalProps> = ({
                         <DownloadCloud className="w-4 h-4" /> ¡Hay actualizaciones disponibles!
                       </span>
                       <span className="text-[11px] text-slate-400 font-mono">
-                        {status.modified_files.length} archivo(s) modificado(s)
+                        {status.changed_files.length} archivo(s) con cambios
                       </span>
                     </div>
 
                     <div className="max-h-36 overflow-y-auto space-y-1 bg-slate-900/60 p-2.5 rounded-xl border border-slate-800/80 text-[11px] font-mono">
-                      {status.modified_files.map((file, idx) => (
+                      {status.changed_files.map((file, idx) => (
                         <div key={idx} className="flex items-center gap-1.5 text-slate-300">
                           <FileCode className="w-3.5 h-3.5 text-cyan-400 flex-shrink-0" />
                           <span className="truncate">{file}</span>
@@ -176,7 +169,7 @@ export const GitUpdaterModal: React.FC<GitUpdaterModalProps> = ({
                   </div>
                 ) : (
                   <div className="flex items-center gap-2 text-emerald-400 text-xs font-bold">
-                    <CheckCircle2 className="w-4 h-4" /> Tu aplicación está en la versión más reciente.
+                    <CheckCircle2 className="w-4 h-4" /> No hay archivos nuevos ni modificados.
                   </div>
                 )}
               </div>

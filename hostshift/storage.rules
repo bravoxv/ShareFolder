@@ -1,0 +1,29 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    function isGroupMember(groupId) {
+      return request.auth != null &&
+        firestore.exists(/databases/(default)/documents/groups/$(groupId)/members/$(request.auth.uid));
+    }
+
+    function isGroupAdmin(groupId) {
+      return isGroupMember(groupId) &&
+        firestore.get(/databases/(default)/documents/groups/$(groupId)/members/$(request.auth.uid)).data.role in ['admin', 'owner'];
+    }
+
+    match /groups/{groupId}/shared-files/{fileId}/{revision}/{chunkName} {
+      allow read: if isGroupMember(groupId);
+      allow create, update: if isGroupMember(groupId) &&
+        request.resource.size <= 8 * 1024 * 1024;
+      allow delete: if isGroupAdmin(groupId) ||
+        (isGroupMember(groupId) && resource.metadata.uploadedBy == request.auth.uid);
+    }
+
+    // Permite descargar/eliminar archivos compartidos antes del cambio a bloques.
+    match /groups/{groupId}/shared-files/{fileId} {
+      allow read: if isGroupMember(groupId);
+      allow delete: if isGroupAdmin(groupId) ||
+        (isGroupMember(groupId) && resource.metadata.uploadedBy == request.auth.uid);
+    }
+  }
+}

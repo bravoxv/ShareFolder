@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { 
   Users, 
   PlusCircle, 
@@ -19,7 +19,7 @@ import {
 } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { UserDocument, GroupDocument } from '../types/schema';
-import { GroupService } from '../services/groupService';
+import { getGroupPermissionError, GroupService } from '../services/groupService';
 
 interface WelcomeScreenProps {
   currentUser: UserDocument | null;
@@ -42,6 +42,28 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
   const [showCodeInput, setShowCodeInput] = useState(false);
   const [sessionCodeInput, setSessionCodeInput] = useState('');
   const [myGroups, setMyGroups] = useState(() => GroupService.getUserGroups());
+
+  useEffect(() => {
+    if (!currentUser || myGroups.length === 0) return;
+    let cancelled = false;
+    const refreshGroups = async () => {
+      const refreshed = await Promise.all(myGroups.map(async item => {
+        try {
+          const group = await GroupService.getGroupIfMember(item.group.id, currentUser.uid);
+          const membership = await GroupService.getGroupMembership(item.group.id, currentUser.uid);
+          return group && membership ? { ...item, group, role: membership.role } : null;
+        } catch {
+          return item;
+        }
+      }));
+      if (cancelled) return;
+      const validGroups = refreshed.filter(item => item !== null);
+      setMyGroups(validGroups);
+      localStorage.setItem('hostshift_my_groups', JSON.stringify(validGroups));
+    };
+    void refreshGroups();
+    return () => { cancelled = true; };
+  }, [currentUser?.uid]);
 
   const handleBrowserSignIn = async () => {
     setLoading(true);
@@ -94,28 +116,14 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
     setErrorMsg(null);
 
     try {
-      let createdGroup: GroupDocument;
-      try {
-        // Intento de guardado atómico en Firebase Firestore
-        createdGroup = await GroupService.createGroup(name, currentUser);
-      } catch (err: any) {
-        console.warn('Firestore grupo fallback local:', err);
-        // Fallback local garantizado si las reglas o la conexión tardan
-        createdGroup = {
-          id: 'grp-' + crypto.randomUUID().slice(0, 8),
-          name: name,
-          ownerId: currentUser.uid,
-          createdAt: Date.now(),
-          maxMembers: 10
-        };
-      }
+      const createdGroup: GroupDocument = await GroupService.createGroup(name, currentUser);
 
       GroupService.saveUserGroup(createdGroup, 'owner');
       setMyGroups(GroupService.getUserGroups());
       localStorage.setItem('hostshift_active_group', JSON.stringify(createdGroup));
       onGroupSelected(createdGroup, 'owner');
     } catch (err: any) {
-      setErrorMsg(err.message || 'Error al crear el grupo.');
+      setErrorMsg(getGroupPermissionError(err, 'crear el grupo'));
     } finally {
       setLoading(false);
     }
@@ -441,12 +449,12 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
                     <div>
                       <label className="text-xs text-slate-300 font-semibold block mb-1.5 flex items-center gap-1.5">
                         <Globe className="w-4 h-4 text-emerald-400" />
-                        Enlace de Invitación o ID de Grupo:
+                        Enlace privado de invitación:
                       </label>
                       <input
                         type="text"
                         required
-                        placeholder="https://hostshift.gg/join/hs-12345 o grp-uuid..."
+                        placeholder="https://hostshift.gg/join/ID_GRUPO/CÓDIGO"
                         value={joinInput}
                         onChange={(e) => setJoinInput(e.target.value)}
                         className="w-full bg-slate-900 border border-slate-700 text-xs font-mono text-slate-100 px-3.5 py-2.5 rounded-xl outline-none focus:border-emerald-500 placeholder-slate-600"
@@ -458,7 +466,7 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
                         <UserPlus className="w-3.5 h-3.5 text-emerald-400" /> Conexión Internacional
                       </div>
                       <p>
-                        Te unirás al grupo compartido mediante Firebase para sincronizar archivos y conectarte al host.
+                        Solo el propietario o un administrador puede generar estas invitaciones. Al unirte, tu rol se asigna desde el grupo.
                       </p>
                     </div>
 
@@ -543,6 +551,10 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
                               <Trash2 className="w-3.5 h-3.5" />
                             </button>
                           </div>
+
+                          <p className="text-[10px] text-slate-500 mb-2">
+                            Creado por <span className="text-amber-300">{group.ownerName || (role === 'owner' ? currentUser.displayName : 'Propietario')}</span>
+                          </p>
 
                           {/* Servidor configurado en este grupo */}
                           <div className="bg-slate-950/80 p-2 rounded-lg border border-slate-800/60 mb-2 space-y-1">

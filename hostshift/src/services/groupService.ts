@@ -13,16 +13,39 @@ import {
   doc, 
   setDoc, 
   getDoc, 
+  collection,
+  getDocs,
   runTransaction
 } from 'firebase/firestore';
 import { 
   GroupDocument, 
   MemberDocument, 
   InviteDocument, 
-  UserDocument 
+  UserDocument,
+  SharedFileDocument
 } from '../types/schema';
 
+export function getGroupPermissionError(error: unknown, operation: string): string {
+  const firebaseError = error as { code?: string; message?: string };
+  if (firebaseError?.code === 'permission-denied' || firebaseError?.code === 'firestore/permission-denied') {
+    return `Firebase rechazó ${operation}. Publica las reglas actualizadas de Firestore del proyecto sharefolder-7dccf (hostshift/firestore.rules) y vuelve a intentarlo.`;
+  }
+  return firebaseError?.message || `No se pudo ${operation}.`;
+}
+
 export class GroupService {
+  private static async requireFirebaseUser(expectedUid?: string): Promise<import('firebase/auth').User> {
+    await auth.authStateReady();
+    const firebaseUser = auth.currentUser;
+    if (!firebaseUser) {
+      throw new Error('La sesión local no está autenticada en Firebase. Cierra sesión, vuelve a iniciar sesión y prueba otra vez.');
+    }
+    if (expectedUid && firebaseUser.uid !== expectedUid) {
+      throw new Error('La cuenta guardada en la aplicación no coincide con la sesión activa de Firebase. Cierra sesión y vuelve a iniciar sesión con la cuenta correcta.');
+    }
+    return firebaseUser;
+  }
+
   /**
    * Inicia sesión con Google
    */
@@ -65,32 +88,38 @@ export class GroupService {
    * Crea un nuevo grupo privado y registra al usuario como 'owner'
    */
   static async createGroup(groupName: string, owner: UserDocument): Promise<GroupDocument> {
+    const firebaseUser = await this.requireFirebaseUser(owner.uid);
     const groupId = crypto.randomUUID();
     const now = Date.now();
 
     const groupData: GroupDocument = {
       id: groupId,
       name: groupName,
-      ownerId: owner.uid,
+      ownerId: firebaseUser.uid,
+      ownerName: owner.displayName,
       createdAt: now,
       maxMembers: 10
     };
 
     const memberData: MemberDocument = {
-      userId: owner.uid,
+      userId: firebaseUser.uid,
       role: 'owner',
       joinedAt: now,
-      addedBy: owner.uid
+      addedBy: firebaseUser.uid
     };
 
     // Creación atómica del grupo y la primera membresía
-    await runTransaction(db, async (tx) => {
-      const groupRef = doc(db, 'groups', groupId);
-      const memberRef = doc(db, 'groups', groupId, 'members', owner.uid);
+    try {
+      await runTransaction(db, async (tx) => {
+        const groupRef = doc(db, 'groups', groupId);
+        const memberRef = doc(db, 'groups', groupId, 'members', owner.uid);
 
-      tx.set(groupRef, groupData);
-      tx.set(memberRef, memberData);
-    });
+        tx.set(groupRef, groupData);
+        tx.set(memberRef, memberData);
+      });
+    } catch (error) {
+      throw new Error(getGroupPermissionError(error, 'crear el grupo y registrar al propietario'));
+    }
 
     return groupData;
   }
@@ -166,7 +195,8 @@ export class GroupService {
           userId: user.uid,
           role: invite.roleToAssign || 'player',
           joinedAt: now,
-          addedBy: invite.createdBy
+          addedBy: invite.createdBy,
+          inviteId
         };
 
         tx.set(memberRef, newMember);
@@ -182,13 +212,50 @@ export class GroupService {
    * Obtiene los datos del grupo si el usuario es miembro (aislamiento)
    */
   static async getGroupIfMember(groupId: string, userId: string): Promise<GroupDocument | null> {
+    await this.requireFirebaseUser(userId);
     const memberSnap = await getDoc(doc(db, 'groups', groupId, 'members', userId));
     if (!memberSnap.exists()) {
       return null; // Aislamiento: si no es miembro, no tiene acceso
     }
 
     const groupSnap = await getDoc(doc(db, 'groups', groupId));
-    return groupSnap.exists() ? (groupSnap.data() as GroupDocument) : null;
+    if (!groupSnap.exists()) return null;
+    const group = groupSnap.data() as GroupDocument;
+    if (!group.ownerName) {
+      try { group.ownerName = await this.getUserDisplayName(group.ownerId); }
+      catch { group.ownerName = 'Propietario'; }
+    }
+    return group;
+  }
+
+  static async getGroupMembership(groupId: string, userId: string): Promise<MemberDocument | null> {
+    await this.requireFirebaseUser(userId);
+    const memberSnap = await getDoc(doc(db, 'groups', groupId, 'members', userId));
+    return memberSnap.exists() ? memberSnap.data() as MemberDocument : null;
+  }
+
+  static async getUserDisplayName(userId: string): Promise<string> {
+    const userSnap = await getDoc(doc(db, 'users', userId));
+    if (!userSnap.exists()) return 'Propietario';
+    const user = userSnap.data() as UserDocument;
+    return user.displayName || user.email?.split('@')[0] || 'Propietario';
+  }
+
+  static async getSharedFiles(groupId: string): Promise<SharedFileDocument[]> {
+    const snapshot = await getDocs(collection(db, 'groups', groupId, 'shared_files'));
+    return snapshot.docs.map(file => file.data() as SharedFileDocument);
+  }
+
+  static async getGroupMembers(groupId: string): Promise<Array<{ uid: string; displayName: string; role: string }>> {
+    const snapshot = await getDocs(collection(db, 'groups', groupId, 'members'));
+    return Promise.all(snapshot.docs.map(async memberDoc => {
+      const member = memberDoc.data() as MemberDocument;
+      return {
+        uid: member.userId,
+        displayName: await this.getUserDisplayName(member.userId),
+        role: member.role
+      };
+    }));
   }
 
   /**
@@ -198,58 +265,36 @@ export class GroupService {
     groupOrInviteInput: string,
     user: UserDocument
   ): Promise<{ success: boolean; group?: GroupDocument; role?: string; reason?: string }> {
-    let clean = groupOrInviteInput.trim();
-    if (clean.includes('/join/')) {
-      clean = clean.split('/join/')[1];
-    }
-    clean = clean.replace(/[^a-zA-Z0-9_-]/g, '');
+    const input = groupOrInviteInput.trim();
+    let groupId = '';
+    let inviteId = '';
 
-    if (!clean) {
-      return { success: false, reason: 'Ingresa un enlace, ID de grupo o código válido.' };
+    if (input.includes('/join/')) {
+      const parts = input.split('/join/')[1].split(/[?#]/)[0].split('/').filter(Boolean);
+      [groupId, inviteId] = parts;
+    } else if (input.includes('|')) {
+      [groupId, inviteId] = input.split('|').map(part => part.trim());
+    } else {
+      groupId = input.replace(/[^a-zA-Z0-9_-]/g, '');
     }
 
-    // 1. Intentar buscar como ID de grupo directo
+    if (!groupId) return { success: false, reason: 'Ingresa una invitación o ID de grupo válido.' };
+
+    if (inviteId) {
+      const redeemed = await this.redeemInvite(groupId, inviteId, user);
+      if (!redeemed.success) return { success: false, reason: redeemed.reason };
+    }
+
     try {
-      const groupRef = doc(db, 'groups', clean);
-      const groupSnap = await getDoc(groupRef);
-
-      if (groupSnap.exists()) {
-        const groupData = groupSnap.data() as GroupDocument;
-        const memberRef = doc(db, 'groups', clean, 'members', user.uid);
-        const memberSnap = await getDoc(memberRef);
-
-        let userRole = 'player';
-        if (memberSnap.exists()) {
-          userRole = memberSnap.data().role || 'player';
-        } else {
-          // Si el usuario es el dueño original
-          if (groupData.ownerId === user.uid) {
-            userRole = 'owner';
-          }
-          await setDoc(memberRef, {
-            userId: user.uid,
-            role: userRole,
-            joinedAt: Date.now(),
-            addedBy: groupData.ownerId
-          }, { merge: true });
-        }
-
-        return { success: true, group: groupData, role: userRole };
+      const group = await this.getGroupIfMember(groupId, user.uid);
+      const membership = await this.getGroupMembership(groupId, user.uid);
+      if (!group || !membership) {
+        return { success: false, reason: 'Este grupo es privado. Pídele al propietario una invitación y vuelve a intentarlo.' };
       }
+      return { success: true, group, role: membership.role };
     } catch (err: any) {
-      console.warn('Consulta directa de grupo falló:', err);
+      return { success: false, reason: err.message || 'No se pudo verificar tu membresía en el grupo.' };
     }
-
-    // 2. Si no es un ID directo o hubo aislamiento, crear membresía de invitado
-    const fallbackGroup: GroupDocument = {
-      id: clean.startsWith('grp-') ? clean : `grp-${clean.slice(0, 8)}`,
-      name: `Grupo Internacional (${clean.slice(0, 6)})`,
-      ownerId: 'remote-owner',
-      createdAt: Date.now(),
-      maxMembers: 10
-    };
-
-    return { success: true, group: fallbackGroup, role: 'player' };
   }
 
   /**

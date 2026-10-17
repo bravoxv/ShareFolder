@@ -33,10 +33,10 @@ import { AuthGoogleModal } from './components/AuthGoogleModal';
 import { ShareFilesModal } from './components/ShareFilesModal';
 import { WelcomeScreen } from './components/WelcomeScreen';
 import { GitUpdaterModal } from './components/GitUpdaterModal';
-import { GroupService } from './services/groupService';
+import { getGroupPermissionError, GroupService } from './services/groupService';
 
 export function App() {
-  const [role, setRole] = useState<Role>('owner');
+  const [role, setRole] = useState<Role>('player');
   const [currentUser, setCurrentUser] = useState<UserDocument | null>(() => {
     const saved = localStorage.getItem('hostshift_user');
     return saved ? JSON.parse(saved) : null;
@@ -99,7 +99,74 @@ export function App() {
     }
     return 'Los Pibes Gaming';
   });
-  const inviteCode = activeGroup ? activeGroup.id.slice(0, 8) : 'hs-invite-9482-xy';
+  const [groupAccessReady, setGroupAccessReady] = useState(false);
+  const [groupAccessError, setGroupAccessError] = useState('');
+  const [groupMembers, setGroupMembers] = useState<Array<{ uid: string; displayName: string; role: string }>>([]);
+
+  useEffect(() => {
+    if (!activeGroup) {
+      setRole('player');
+      setGroupMembers([]);
+      setGroupAccessError('');
+      setGroupAccessReady(true);
+      return;
+    }
+
+    let cancelled = false;
+    setGroupAccessReady(false);
+    setGroupAccessError('');
+
+    const validateMembership = async () => {
+      if (!currentUser) {
+        localStorage.removeItem('hostshift_active_group');
+        if (!cancelled) {
+          setActiveGroup(null);
+          setGroupAccessReady(true);
+        }
+        return;
+      }
+
+      try {
+        const membership = await GroupService.getGroupMembership(activeGroup.id, currentUser.uid);
+        const verifiedGroup = membership
+          ? await GroupService.getGroupIfMember(activeGroup.id, currentUser.uid)
+          : null;
+
+        if (!membership || !verifiedGroup) {
+          localStorage.removeItem('hostshift_active_group');
+          if (!cancelled) {
+            setActiveGroup(null);
+            setGroupAccessError('No se pudo verificar que perteneces a ese grupo. Selecciona un grupo válido o vuelve a unirte.');
+            setGroupAccessReady(true);
+          }
+          return;
+        }
+
+        if (cancelled) return;
+        setRole(membership.role);
+        try {
+          setGroupMembers(await GroupService.getGroupMembers(activeGroup.id));
+        } catch (error) {
+          console.warn('No se pudo cargar la lista de miembros del grupo:', error);
+          setGroupMembers([]);
+        }
+        setActiveGroup(verifiedGroup);
+        setGroupName(verifiedGroup.name);
+        localStorage.setItem('hostshift_active_group', JSON.stringify(verifiedGroup));
+        GroupService.saveUserGroup(verifiedGroup, membership.role);
+        setGroupAccessReady(true);
+      } catch (error) {
+        if (!cancelled) {
+          setGroupAccessError(getGroupPermissionError(error, 'abrir el grupo'));
+          setGroupAccessReady(true);
+        }
+      }
+    };
+
+    void validateMembership();
+    return () => { cancelled = true; };
+  }, [activeGroup?.id, currentUser?.uid]);
+  const [inviteLink, setInviteLink] = useState('');
   const [copiedInvite, setCopiedInvite] = useState<boolean>(false);
 
   // Carpeta de servidor y archivo iniciador seleccionable
@@ -130,10 +197,18 @@ export function App() {
     "[P2P] Carpeta de servidor vinculada a C:\\Servidores\\MiServidor."
   ]);
 
-  const copyInvite = () => {
-    navigator.clipboard.writeText(`https://hostshift.gg/join/${inviteCode}`);
-    setCopiedInvite(true);
-    setTimeout(() => setCopiedInvite(false), 2000);
+  const copyInvite = async () => {
+    if (!activeGroup || !currentUser) return;
+    try {
+      const invite = await GroupService.createInvite(activeGroup.id, currentUser.uid);
+      const link = `https://hostshift.gg/join/${activeGroup.id}/${invite.id}`;
+      await navigator.clipboard.writeText(link);
+      setInviteLink(link);
+      setCopiedInvite(true);
+      setTimeout(() => setCopiedInvite(false), 2000);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'No se pudo crear la invitación.');
+    }
   };
 
   // Cargar directorio real desde el disco de Windows mediante Tauri
@@ -384,6 +459,21 @@ export function App() {
 
   const isOwnerOrAdmin = role === 'owner' || role === 'admin';
 
+  if (activeGroup && !groupAccessReady) {
+    return <div className="h-screen w-screen bg-slate-950 text-slate-200 flex items-center justify-center text-sm">Verificando tu membresía y permisos del grupo...</div>;
+  }
+
+  if (activeGroup && groupAccessError) {
+    return (
+      <div className="h-screen w-screen bg-slate-950 text-slate-200 flex items-center justify-center p-6">
+        <div className="max-w-md rounded-2xl border border-rose-500/30 bg-slate-900 p-6 text-center">
+          <p className="text-sm text-rose-200 mb-4">{groupAccessError}</p>
+          <button onClick={() => { localStorage.removeItem('hostshift_active_group'); setActiveGroup(null); setGroupAccessError(''); }} className="rounded-lg bg-slate-800 px-4 py-2 text-xs font-bold hover:bg-slate-700">Volver a mis grupos</button>
+        </div>
+      </div>
+    );
+  }
+
   // Si aún no se ha creado o seleccionado un grupo privado, mostrar la pantalla inicial
   if (!activeGroup) {
     return (
@@ -399,8 +489,11 @@ export function App() {
           onGroupSelected={(group, assignedRole) => {
             setActiveGroup(group);
             setGroupName(group.name);
-            const userRole = (assignedRole as Role) || 'owner';
-            setRole(userRole);
+            const userRole = (assignedRole as Role) || 'player';
+            setRole('player');
+            setGroupAccessReady(false);
+            setGroupAccessError('');
+            setInviteLink('');
 
             // Cargar configuración de servidor asociada a este grupo específico
             const groupCfg = GroupService.getGroupServerConfig(group.id);
@@ -491,7 +584,7 @@ export function App() {
             <div className="mt-2 text-[11px] text-slate-500 flex items-center justify-between">
               <span>Propietario:</span>
               <span className="text-amber-300 font-semibold flex items-center gap-1">
-                <ShieldCheck className="w-3 h-3" /> {currentUser ? currentUser.displayName : 'Propietario'}
+                <ShieldCheck className="w-3 h-3" /> {activeGroup.ownerName || 'Propietario'}
               </span>
             </div>
             <button
@@ -522,34 +615,20 @@ export function App() {
               <input
                 type="text"
                 readOnly
-                value={`https://hostshift.gg/join/${inviteCode}`}
+                value={inviteLink || 'Haz clic en copiar para crear una invitación'}
                 className="w-full bg-slate-900 border border-slate-700 text-[11px] font-mono text-emerald-400 px-2.5 py-1.5 rounded-lg outline-none truncate"
               />
               <button
-                onClick={copyInvite}
-                title="Copiar enlace"
+                onClick={() => void copyInvite()}
+                title="Crear y copiar invitación"
                 className="bg-slate-800 hover:bg-slate-700 text-slate-200 p-2 rounded-lg border border-slate-700 transition-all flex-shrink-0"
               >
                 {copiedInvite ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
               </button>
             </div>
-            <span className="text-[10px] text-slate-500 block mt-2">Válido 48h &bull; Máx 5 miembros</span>
+            <span className="text-[10px] text-slate-500 block mt-2">Cada invitación vence en 48 h y permite hasta 5 miembros.</span>
           </div>
 
-          {/* Simulador de Rol (Para pruebas) */}
-          <div className="bg-slate-950 p-3.5 rounded-xl border border-slate-800">
-            <span className="text-[11px] text-slate-400 block mb-1.5 font-medium">Modo de Vista (Rol):</span>
-            <select
-              value={role}
-              onChange={(e) => setRole(e.target.value as Role)}
-              className="w-full bg-slate-900 border border-slate-700 text-xs text-slate-200 rounded-lg p-2 outline-none"
-            >
-              <option value="owner">👑 Propietario (Owner)</option>
-              <option value="admin">🛡️ Administrador</option>
-              <option value="host">💻 Candidato a Host</option>
-              <option value="player">🎮 Jugador (Solo Lectura)</option>
-            </select>
-          </div>
         </div>
 
         {/* Pie de barra lateral */}
@@ -1013,46 +1092,30 @@ export function App() {
                       Candidatos a Host y Permisos
                     </h3>
                     <p className="text-xs text-slate-400">
-                      Define qué miembros de confianza pueden encender el servidor y replicar el mundo en su disco.
+                      Miembros y permisos verificados para este grupo.
                     </p>
                   </div>
-                  <span className="text-xs bg-slate-800 text-slate-300 px-3 py-1 rounded-full font-mono">3 Miembros</span>
+                  <span className="text-xs bg-slate-800 text-slate-300 px-3 py-1 rounded-full font-mono">{groupMembers.length} miembros</span>
                 </div>
 
                 <div className="divide-y divide-slate-800/80 bg-slate-950 rounded-xl border border-slate-800 overflow-hidden">
-                  <div className="p-4 flex items-center justify-between">
-                    <div>
-                      <div className="text-sm font-bold text-slate-200 flex items-center gap-2">
-                        {currentUser ? currentUser.displayName : 'Matias'} <span className="text-xs text-indigo-400">(Tú)</span>
+                  {groupMembers.length ? groupMembers.map(member => (
+                    <div key={member.uid} className="p-4 flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="text-sm font-bold text-slate-200 truncate">
+                          {member.displayName} {member.uid === currentUser?.uid && <span className="text-xs text-indigo-400">(Tú)</span>}
+                        </div>
+                        <div className="text-xs text-slate-500 font-mono truncate">ID: {member.uid.slice(0, 16)}</div>
                       </div>
-                      <div className="text-xs text-slate-500 font-mono">
-                        ID: {currentUser ? currentUser.uid.slice(0, 16) : 'usr-matias-01'} &bull; Copia local: Al día (v{epoch})
-                      </div>
+                      <span className={`text-xs px-3 py-1 rounded-lg font-bold uppercase ${
+                        member.role === 'owner' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' :
+                        member.role === 'admin' ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30' :
+                        'bg-slate-800 text-slate-400 border border-slate-700'
+                      }`}>
+                        {member.role === 'owner' ? 'Propietario' : member.role === 'admin' ? 'Administrador' : member.role === 'host' ? 'Candidato a host' : 'Jugador'}
+                      </span>
                     </div>
-                    <span className="text-xs px-3 py-1 bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded-lg font-bold">
-                      PROPIETARIO
-                    </span>
-                  </div>
-
-                  <div className="p-4 flex items-center justify-between">
-                    <div>
-                      <div className="text-sm font-bold text-slate-200">Lucas_Gamer</div>
-                      <div className="text-xs text-slate-500 font-mono">ID: usr-lucas-88 &bull; PC Apto (16GB RAM)</div>
-                    </div>
-                    <span className="text-xs px-3 py-1 bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 rounded-lg font-medium">
-                      CANDIDATO A HOST
-                    </span>
-                  </div>
-
-                  <div className="p-4 flex items-center justify-between">
-                    <div>
-                      <div className="text-sm font-bold text-slate-200">Agustin99</div>
-                      <div className="text-xs text-slate-500 font-mono">ID: usr-agus-42 &bull; Conexión de jugador</div>
-                    </div>
-                    <span className="text-xs px-3 py-1 bg-slate-800 text-slate-400 rounded-lg font-medium">
-                      JUGADOR
-                    </span>
-                  </div>
+                  )) : <p className="p-5 text-xs text-slate-500 text-center">No se pudieron cargar miembros del grupo.</p>}
                 </div>
               </div>
             </div>
@@ -1173,8 +1236,12 @@ export function App() {
       <ShareFilesModal
         isOpen={isShareOpen}
         onClose={() => setIsShareOpen(false)}
+        groupId={activeGroup.id}
+        groupName={activeGroup.name}
+        ownerName={activeGroup.ownerName || 'Propietario'}
+        currentUser={currentUser!}
+        currentRole={role}
         serverFolder={serverFolder}
-        files={mockFiles}
       />
 
       {/* Modal de Actualización Inteligente desde GitHub */}

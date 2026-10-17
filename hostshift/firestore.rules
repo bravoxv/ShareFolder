@@ -31,17 +31,62 @@ service cloud.firestore {
     match /groups/{groupId} {
       allow read: if isGroupMember(groupId);
       allow create: if isAuthenticated() && request.resource.data.ownerId == request.auth.uid;
-      allow update, delete: if isGroupOwner(groupId);
+      allow update: if isGroupOwner(groupId) && request.resource.data.ownerId == resource.data.ownerId;
+      allow delete: if isGroupOwner(groupId);
 
       match /members/{memberId} {
+        // Permite consultar el propio documento incluso cuando aún no existe;
+        // la app puede distinguir "no eres miembro" de un permiso denegado.
+        allow read: if isGroupMember(groupId) ||
+          (isAuthenticated() && memberId == request.auth.uid);
+        allow create: if (
+          isAuthenticated() && memberId == request.auth.uid &&
+          request.resource.data.userId == request.auth.uid &&
+          request.resource.data.role == 'owner' &&
+          getAfter(/databases/$(database)/documents/groups/$(groupId)).data.ownerId == request.auth.uid
+        ) || (
+          isGroupAdmin(groupId) && memberId != request.auth.uid &&
+          request.resource.data.userId == memberId &&
+          request.resource.data.role in ['admin', 'host', 'player']
+        ) || (
+          isAuthenticated() && memberId == request.auth.uid &&
+          request.resource.data.userId == request.auth.uid &&
+          request.resource.data.role == 'player' &&
+          request.resource.data.inviteId is string &&
+          exists(/databases/$(database)/documents/groups/$(groupId)/invites/$(request.resource.data.inviteId)) &&
+          request.resource.data.addedBy == get(/databases/$(database)/documents/groups/$(groupId)/invites/$(request.resource.data.inviteId)).data.createdBy &&
+          getAfter(/databases/$(database)/documents/groups/$(groupId)/invites/$(request.resource.data.inviteId)).data.usedCount ==
+            get(/databases/$(database)/documents/groups/$(groupId)/invites/$(request.resource.data.inviteId)).data.usedCount + 1
+        );
+        allow update: if isGroupOwner(groupId) && memberId != request.auth.uid &&
+          request.resource.data.userId == resource.data.userId &&
+          request.resource.data.role in ['admin', 'host', 'player'];
+        allow delete: if isGroupOwner(groupId) && memberId != request.auth.uid;
+      }
+
+      match /shared_files/{fileId} {
         allow read: if isGroupMember(groupId);
-        // Only owner can assign/change admin roles; admins can invite members
-        allow write: if isGroupAdmin(groupId);
+        allow create, update: if isGroupMember(groupId) &&
+          request.resource.data.uploadedBy == request.auth.uid &&
+          request.resource.data.sizeBytes >= 0 &&
+          request.resource.data.chunkCount > 0 &&
+          request.resource.data.chunkCount <= 1000000 &&
+          request.resource.data.chunkSize == 8 * 1024 * 1024;
+        allow delete: if isGroupMember(groupId) &&
+          (isGroupAdmin(groupId) || resource.data.uploadedBy == request.auth.uid);
       }
 
       match /invites/{inviteId} {
         allow read: if isAuthenticated();
-        allow write: if isGroupAdmin(groupId);
+        allow create, delete: if isGroupAdmin(groupId);
+        allow update: if isGroupAdmin(groupId) || (
+          isAuthenticated() &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['usedCount']) &&
+          request.resource.data.usedCount == resource.data.usedCount + 1 &&
+          request.resource.data.usedCount <= resource.data.maxUses &&
+          request.time.toMillis() < resource.data.expiresAt &&
+          getAfter(/databases/$(database)/documents/groups/$(groupId)/members/$(request.auth.uid)).data.inviteId == inviteId
+        );
       }
 
       match /servers/{serverId} {

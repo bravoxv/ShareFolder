@@ -4,7 +4,11 @@ pub mod file_manager;
 pub mod git_updater;
 
 use integrity_engine::generate_directory_manifest;
-use file_manager::{list_directory_contents, read_file_content, save_file_content};
+use file_manager::{
+    list_directory_contents, list_server_files, read_file_content, read_server_file_chunk,
+    save_file_content, start_server_file_download, write_server_file_chunk,
+    finish_server_file_download, cancel_server_file_download,
+};
 use git_updater::{check_git_updates, apply_git_updates};
 use process_manager::ServerProcessManager;
 use std::sync::Mutex;
@@ -230,20 +234,17 @@ fn get_playit_tunnel_address() -> Result<Option<String>, String> {
     Ok(None)
 }
 
-static AUTH_SERVER_STARTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static AUTH_SERVER_PORT: Mutex<Option<u16>> = Mutex::new(None);
 
-fn ensure_auth_http_server() -> Result<(), String> {
-    if AUTH_SERVER_STARTED.swap(true, std::sync::atomic::Ordering::SeqCst) {
-        return Ok(());
-    }
-
+fn ensure_auth_http_server() -> Result<u16, String> {
+    let mut port = AUTH_SERVER_PORT.lock().map_err(|_| "No se pudo acceder al servidor de autenticación.".to_string())?;
+    if let Some(port) = *port { return Ok(port); }
     use std::io::{Read, Write};
     use std::net::TcpListener;
-    let listener = TcpListener::bind("127.0.0.1:28475")
-        .map_err(|error| {
-            AUTH_SERVER_STARTED.store(false, std::sync::atomic::Ordering::SeqCst);
-            format!("No se pudo iniciar el servidor local de autenticación: {}", error)
-        })?;
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .map_err(|error| format!("No se pudo iniciar el servidor local de autenticación: {}", error))?;
+    let assigned_port = listener.local_addr().map_err(|error| format!("No se pudo detectar el puerto local de autenticación: {}", error))?.port();
+    listener.set_nonblocking(false).map_err(|error| format!("No se pudo preparar el servidor local de autenticación: {}", error))?;
     std::thread::spawn(move || {
         let html = include_str!("../../../browser_login.html");
         for mut stream in listener.incoming().flatten() {
@@ -257,20 +258,18 @@ fn ensure_auth_http_server() -> Result<(), String> {
             let _ = stream.flush();
         }
     });
-    Ok(())
+    *port = Some(assigned_port);
+    Ok(assigned_port)
 }
 
 #[tauri::command]
 fn open_external_url(url: String) -> Result<(), String> {
-    if url == "browser_login.html" {
-        ensure_auth_http_server()?;
-    }
-
     #[cfg(windows)]
     {
         use std::process::Command;
         let target = if url == "browser_login.html" {
-            "http://127.0.0.1:28475".to_string()
+            let port = ensure_auth_http_server()?;
+            format!("http://127.0.0.1:{}", port)
         } else if url.starts_with("http://") || url.starts_with("https://") {
             url
         } else {
@@ -298,6 +297,12 @@ pub fn run() {
             greet,
             generate_directory_manifest,
             list_directory_contents,
+            list_server_files,
+            read_server_file_chunk,
+            start_server_file_download,
+            write_server_file_chunk,
+            finish_server_file_download,
+            cancel_server_file_download,
             read_file_content,
             save_file_content,
             start_game_server,

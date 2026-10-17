@@ -19,9 +19,23 @@ export interface GroupDocument {
   id: string;                 // UUID del grupo
   name: string;               // Nombre del grupo (ej: "Los Pibes Survival")
   ownerId: string;            // UID del propietario legítimo
+  ownerName?: string;         // Nombre visible del creador del grupo
   createdAt: number;
   maxMembers: number;         // Límite de miembros por cuota (ej: 10)
   activeServerId?: string;    // ID del servidor actualmente configurado
+}
+
+export interface SharedFileDocument {
+  id: string;
+  name: string;
+  relativePath: string;
+  storagePath: string;
+  sizeBytes: number;
+  chunkCount?: number;
+  chunkSize?: number;
+  uploadedBy: string;
+  uploadedByName: string;
+  updatedAt: number;
 }
 
 // 4. Membresía (Colección anidada: /groups/{groupId}/members/{userId})
@@ -30,6 +44,7 @@ export interface MemberDocument {
   role: GroupRole;
   joinedAt: number;
   addedBy: string;            // UID del admin/owner que aprobó la entrada
+  inviteId?: string;
 }
 
 // 5. Invitación privada (/groups/{groupId}/invites/{inviteId})

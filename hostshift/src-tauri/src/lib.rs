@@ -1,31 +1,35 @@
-pub mod process_manager;
-pub mod integrity_engine;
 pub mod file_manager;
 pub mod git_updater;
+pub mod integrity_engine;
+pub mod process_manager;
 pub mod syncthing;
 
-use integrity_engine::generate_directory_manifest;
 use file_manager::{
-    list_directory_contents, list_server_files, read_file_content, read_server_file_chunk,
-    save_file_content, start_server_file_download, write_server_file_chunk,
-    finish_server_file_download, cancel_server_file_download,
+    cancel_server_file_download, finish_server_file_download, list_directory_contents,
+    list_server_files, read_file_content, read_server_file_chunk, save_file_content,
+    start_server_file_download, write_server_file_chunk,
 };
-use git_updater::{check_git_updates, apply_git_updates};
+use git_updater::{apply_git_updates, check_git_updates};
+use integrity_engine::generate_directory_manifest;
 use process_manager::ServerProcessManager;
+use std::{sync::Mutex, time::Duration};
 use syncthing::{syncthing_connect_group, syncthing_stop};
-use std::sync::Mutex;
 use tauri::Emitter;
 
 static PROCESS_MANAGER: Mutex<Option<ServerProcessManager>> = Mutex::new(None);
 static PLAYIT_MANAGER: Mutex<Option<ServerProcessManager>> = Mutex::new(None);
 
 #[tauri::command]
-fn start_game_server(executable_path: String, working_dir: String, app_handle: tauri::AppHandle) -> Result<u32, String> {
+fn start_game_server(
+    executable_path: String,
+    working_dir: String,
+    app_handle: tauri::AppHandle,
+) -> Result<u32, String> {
     let mut mgr_lock = PROCESS_MANAGER.lock().unwrap();
     if mgr_lock.is_none() {
         *mgr_lock = Some(ServerProcessManager::new());
     }
-    
+
     if let Some(ref mgr) = *mgr_lock {
         mgr.start_server(executable_path, vec![], working_dir, app_handle)
     } else {
@@ -34,16 +38,26 @@ fn start_game_server(executable_path: String, working_dir: String, app_handle: t
 }
 
 #[tauri::command]
-fn start_playit_tunnel(executable_path: String, app_handle: tauri::AppHandle) -> Result<u32, String> {
+fn start_playit_tunnel(
+    executable_path: String,
+    app_handle: tauri::AppHandle,
+) -> Result<u32, String> {
     let mut mgr_lock = PLAYIT_MANAGER.lock().unwrap();
     if mgr_lock.is_none() {
         *mgr_lock = Some(ServerProcessManager::new());
     }
-    
+
     let path = std::path::Path::new(&executable_path);
-    let working_dir = path.parent().unwrap_or_else(|| std::path::Path::new(".")).to_string_lossy().to_string();
+    let working_dir = path
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."))
+        .to_string_lossy()
+        .to_string();
 
     if let Some(ref mgr) = *mgr_lock {
+        if mgr.is_running() {
+            return Err("El túnel de Playit ya está en ejecución.".into());
+        }
         // Enviar evento de log con prefijo playit-log
         #[cfg(windows)]
         use std::os::windows::process::CommandExt;
@@ -58,7 +72,9 @@ fn start_playit_tunnel(executable_path: String, app_handle: tauri::AppHandle) ->
         #[cfg(windows)]
         cmd.creation_flags(CREATE_NO_WINDOW);
 
-        let mut child = cmd.spawn().map_err(|e| format!("Error al arrancar playit.gg: {}", e))?;
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| format!("Error al arrancar playit.gg: {}", e))?;
         let pid = child.id();
 
         // Extraer stdin para comandos de playit
@@ -79,6 +95,20 @@ fn start_playit_tunnel(executable_path: String, app_handle: tauri::AppHandle) ->
             });
         }
 
+        if let Some(stderr) = child.stderr.take() {
+            let app = app_handle.clone();
+            std::thread::spawn(move || {
+                let reader = std::io::BufReader::new(stderr);
+                for line in std::io::BufRead::lines(reader) {
+                    if let Ok(line) = line {
+                        let _ = app.emit("playit-log", line);
+                    }
+                }
+            });
+        }
+
+        mgr.set_child(child);
+
         Ok(pid)
     } else {
         Err("No se pudo iniciar el gestor de túnel playit.".into())
@@ -98,6 +128,9 @@ fn send_command_to_playit(command: String) -> Result<(), String> {
 #[tauri::command]
 fn stop_playit_tunnel() -> Result<(), String> {
     let mut mgr_lock = PLAYIT_MANAGER.lock().unwrap();
+    if let Some(mgr) = mgr_lock.as_ref() {
+        mgr.shutdown(None, Duration::ZERO);
+    }
     *mgr_lock = None;
     Ok(())
 }
@@ -144,9 +177,7 @@ fn check_playit_status() -> Result<bool, String> {
 
 #[tauri::command]
 fn get_playit_tunnel_address() -> Result<Option<String>, String> {
-    let possible_paths = [
-        "C:\\ProgramData\\playit_gg\\playit.toml",
-    ];
+    let possible_paths = ["C:\\ProgramData\\playit_gg\\playit.toml"];
 
     let mut secret_key: Option<String> = None;
 
@@ -205,16 +236,22 @@ fn get_playit_tunnel_address() -> Result<Option<String>, String> {
     let mut cmd = std::process::Command::new("curl.exe");
     cmd.args([
         "-s",
-        "-X", "POST",
+        "-X",
+        "POST",
         "https://api.playit.gg/v1/agents/rundata",
-        "-H", &format!("Authorization: Agent-Key {}", key),
-        "-H", "Content-Type: application/json",
-        "-d", "{}"
+        "-H",
+        &format!("Authorization: Agent-Key {}", key),
+        "-H",
+        "Content-Type: application/json",
+        "-d",
+        "{}",
     ]);
     #[cfg(windows)]
     cmd.creation_flags(CREATE_NO_WINDOW);
 
-    let output = cmd.output().map_err(|e| format!("Error ejecutando curl: {}", e))?;
+    let output = cmd
+        .output()
+        .map_err(|e| format!("Error ejecutando curl: {}", e))?;
     if !output.status.success() {
         return Ok(None);
     }
@@ -223,7 +260,11 @@ fn get_playit_tunnel_address() -> Result<Option<String>, String> {
     let parsed: serde_json::Value = serde_json::from_str(&stdout_str)
         .map_err(|e| format!("Error parseando respuesta playit: {}", e))?;
 
-    if let Some(tunnels) = parsed.get("data").and_then(|d| d.get("tunnels")).and_then(|t| t.as_array()) {
+    if let Some(tunnels) = parsed
+        .get("data")
+        .and_then(|d| d.get("tunnels"))
+        .and_then(|t| t.as_array())
+    {
         for tunnel in tunnels {
             if let Some(addr) = tunnel.get("display_address").and_then(|a| a.as_str()) {
                 if !addr.is_empty() {
@@ -239,14 +280,35 @@ fn get_playit_tunnel_address() -> Result<Option<String>, String> {
 static AUTH_SERVER_PORT: Mutex<Option<u16>> = Mutex::new(None);
 
 fn ensure_auth_http_server() -> Result<u16, String> {
-    let mut port = AUTH_SERVER_PORT.lock().map_err(|_| "No se pudo acceder al servidor de autenticación.".to_string())?;
-    if let Some(port) = *port { return Ok(port); }
+    let mut port = AUTH_SERVER_PORT
+        .lock()
+        .map_err(|_| "No se pudo acceder al servidor de autenticación.".to_string())?;
+    if let Some(port) = *port {
+        return Ok(port);
+    }
     use std::io::{Read, Write};
     use std::net::TcpListener;
-    let listener = TcpListener::bind("127.0.0.1:0")
-        .map_err(|error| format!("No se pudo iniciar el servidor local de autenticación: {}", error))?;
-    let assigned_port = listener.local_addr().map_err(|error| format!("No se pudo detectar el puerto local de autenticación: {}", error))?.port();
-    listener.set_nonblocking(false).map_err(|error| format!("No se pudo preparar el servidor local de autenticación: {}", error))?;
+    let listener = TcpListener::bind("127.0.0.1:0").map_err(|error| {
+        format!(
+            "No se pudo iniciar el servidor local de autenticación: {}",
+            error
+        )
+    })?;
+    let assigned_port = listener
+        .local_addr()
+        .map_err(|error| {
+            format!(
+                "No se pudo detectar el puerto local de autenticación: {}",
+                error
+            )
+        })?
+        .port();
+    listener.set_nonblocking(false).map_err(|error| {
+        format!(
+            "No se pudo preparar el servidor local de autenticación: {}",
+            error
+        )
+    })?;
     std::thread::spawn(move || {
         let html = include_str!("../../../browser_login.html");
         for mut stream in listener.incoming().flatten() {
@@ -254,7 +316,8 @@ fn ensure_auth_http_server() -> Result<u16, String> {
             let _ = stream.read(&mut request);
             let response = format!(
                 "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=UTF-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                html.len(), html
+                html.len(),
+                html
             );
             let _ = stream.write_all(response.as_bytes());
             let _ = stream.flush();
@@ -327,6 +390,16 @@ pub fn run() {
         .expect("error while building tauri application")
         .run(|_app_handle, event| {
             if let tauri::RunEvent::Exit = event {
+                if let Ok(manager) = PROCESS_MANAGER.lock() {
+                    if let Some(manager) = manager.as_ref() {
+                        manager.shutdown(Some("stop".into()), Duration::from_secs(5));
+                    }
+                }
+                if let Ok(manager) = PLAYIT_MANAGER.lock() {
+                    if let Some(manager) = manager.as_ref() {
+                        manager.shutdown(None, Duration::ZERO);
+                    }
+                }
                 let _ = syncthing_stop();
             }
         });

@@ -1,9 +1,29 @@
 // Motor de aislamiento de procesos para servidores dedicados en Windows
 
-use std::process::{Command, Stdio, Child};
-use std::sync::{Arc, Mutex};
 use std::io::{BufRead, BufReader, Write};
+use std::process::{Child, Command, Stdio};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
+
+/// En Windows, detener cmd.exe no detiene necesariamente el servidor que lanzó.
+/// taskkill /T termina también los procesos descendientes de esa consola.
+pub fn kill_process_tree(pid: u32) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        let _ = Command::new("taskkill.exe")
+            .args(["/PID", &pid.to_string(), "/T", "/F"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .creation_flags(CREATE_NO_WINDOW)
+            .status();
+    }
+    #[cfg(not(windows))]
+    let _ = pid;
+}
 
 pub struct ServerProcessManager {
     pub child: Arc<Mutex<Option<Child>>>,
@@ -64,7 +84,8 @@ impl ServerProcessManager {
         use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x08000000;
 
-        let is_batch = executable.to_lowercase().ends_with(".bat") || executable.to_lowercase().ends_with(".cmd");
+        let is_batch = executable.to_lowercase().ends_with(".bat")
+            || executable.to_lowercase().ends_with(".cmd");
 
         let mut cmd = if is_batch {
             let mut c = Command::new("cmd.exe");
@@ -84,7 +105,9 @@ impl ServerProcessManager {
         #[cfg(windows)]
         cmd.creation_flags(CREATE_NO_WINDOW);
 
-        let mut child = cmd.spawn().map_err(|e| format!("Error al arrancar proceso: {}", e))?;
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| format!("Error al arrancar proceso: {}", e))?;
         let pid = child.id();
 
         // Extraer stdin para enviar comandos (ej: help, save, stop, comandos de juego)
@@ -114,8 +137,11 @@ impl ServerProcessManager {
     pub fn send_command(&self, command: &str) -> Result<(), String> {
         let mut writer_lock = self.stdin_writer.lock().unwrap();
         if let Some(ref mut stdin) = *writer_lock {
-            writeln!(stdin, "{}", command).map_err(|e| format!("Fallo al escribir en stdin: {}", e))?;
-            stdin.flush().map_err(|e| format!("Fallo al vaciar buffer stdin: {}", e))?;
+            writeln!(stdin, "{}", command)
+                .map_err(|e| format!("Fallo al escribir en stdin: {}", e))?;
+            stdin
+                .flush()
+                .map_err(|e| format!("Fallo al vaciar buffer stdin: {}", e))?;
             Ok(())
         } else {
             Err("El stdin del servidor no está disponible.".into())
@@ -138,19 +164,80 @@ impl ServerProcessManager {
         }
     }
 
+    /// Registra un proceso iniciado por un comando especializado, como Playit,
+    /// para que también pueda supervisarse y cerrarse al salir de HostShift.
+    pub fn set_child(&self, child: Child) {
+        *self.child.lock().unwrap() = Some(child);
+    }
+
+    /// Cierre síncrono usado al salir de la aplicación. Espera el apagado normal
+    /// y después termina el árbol completo del proceso si sigue activo.
+    pub fn shutdown(&self, stop_command: Option<String>, grace: Duration) {
+        if let Some(command) = stop_command {
+            let _ = self.send_command(&command);
+        }
+        *self.stdin_writer.lock().unwrap() = None;
+
+        let Some(mut child) = self.child.lock().unwrap().take() else {
+            return;
+        };
+        let pid = child.id();
+        let deadline = Instant::now() + grace;
+        loop {
+            match child.try_wait() {
+                Ok(Some(_)) => {
+                    // El proceso padre puede haber terminado antes que un hijo.
+                    kill_process_tree(pid);
+                    return;
+                }
+                Ok(None) if Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+                _ => break,
+            }
+        }
+        kill_process_tree(pid);
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+
     /// Detiene el servidor limpiamente enviando el comando de apagado o terminándolo si no responde
     pub fn stop_server(&self, stop_command: Option<String>) -> Result<(), String> {
         if let Some(cmd) = stop_command {
             let _ = self.send_command(&cmd);
         }
 
-        // Dar un margen de 10 segundos para apagado limpio antes de matar el proceso
+        // Dar un margen para el apagado limpio antes de terminar todo el árbol.
         let child_arc = self.child.clone();
         std::thread::spawn(move || {
-            std::thread::sleep(std::time::Duration::from_secs(10));
-            let mut lock = child_arc.lock().unwrap();
-            if let Some(mut child) = lock.take() {
-                let _ = child.kill();
+            let deadline = Instant::now() + Duration::from_secs(10);
+            loop {
+                let mut lock = child_arc.lock().unwrap();
+                let Some(child) = lock.as_mut() else {
+                    return;
+                };
+                let pid = child.id();
+                match child.try_wait() {
+                    Ok(Some(_)) => {
+                        lock.take();
+                        drop(lock);
+                        kill_process_tree(pid);
+                        return;
+                    }
+                    Ok(None) if Instant::now() < deadline => {
+                        drop(lock);
+                        std::thread::sleep(Duration::from_millis(100));
+                    }
+                    _ => {
+                        if let Some(mut child) = lock.take() {
+                            drop(lock);
+                            kill_process_tree(pid);
+                            let _ = child.kill();
+                            let _ = child.wait();
+                        }
+                        return;
+                    }
+                }
             }
         });
 

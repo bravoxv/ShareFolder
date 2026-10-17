@@ -1,0 +1,83 @@
+name: Build HostShift updater executable
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "hostshift/**"
+      - ".github/workflows/build-updater.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: hostshift-updater-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: hostshift/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install NSIS
+        run: choco install nsis --yes --no-progress
+
+      - name: Install frontend dependencies
+        run: npm ci
+        working-directory: hostshift
+
+      - name: Build Windows application
+        run: npm run tauri -- build --bundles nsis
+        working-directory: hostshift
+
+      - name: Publish executable used by in-app updater
+        shell: pwsh
+        run: |
+          $source = "hostshift/src-tauri/target/release/hostshift.exe"
+          $destination = "bin/HostShift.exe"
+          if (-not (Test-Path $source)) {
+            throw "The Tauri build did not produce $source"
+          }
+          Copy-Item -LiteralPath $source -Destination $destination -Force
+
+          $syncthing = "hostshift/src-tauri/binaries/syncthing.exe"
+          $license = "hostshift/src-tauri/binaries/SYNCTHING-LICENSE.txt"
+          $runtimeFiles = @(
+            @{ path = $destination; target = "executable" },
+            @{ path = $syncthing; target = "syncthing_binary" },
+            @{ path = $license; target = "syncthing_license" }
+          ) | ForEach-Object {
+            $file = Get-Item -LiteralPath $_.path
+            @{
+              path = $_.path.Replace('\\', '/')
+              target = $_.target
+              size = $file.Length
+              sha256 = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            }
+          }
+          @{ files = @($runtimeFiles) } |
+            ConvertTo-Json -Depth 5 |
+            Set-Content -LiteralPath "bin/update-manifest.json" -Encoding utf8
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add $destination "bin/update-manifest.json"
+          git diff --cached --quiet
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "The updater executable is already current."
+            exit 0
+          }
+          git commit -m "build: refresh HostShift updater executable [skip ci]"
+          git push origin HEAD:main

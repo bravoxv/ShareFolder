@@ -4,7 +4,9 @@ import {
   googleProvider 
 } from './firebase';
 import { 
-  signInWithPopup, 
+  signInWithPopup,
+  signInWithCredential,
+  GoogleAuthProvider,
   signOut 
 } from 'firebase/auth';
 import { 
@@ -26,11 +28,25 @@ export class GroupService {
    */
   static async loginWithGoogle(): Promise<UserDocument> {
     const credential = await signInWithPopup(auth, googleProvider);
-    const user = credential.user;
+    return this.saveAuthenticatedUser(credential.user);
+  }
+
+  /** Completa en Firebase Auth el acceso iniciado en el navegador externo. */
+  static async loginWithGoogleAccessToken(accessToken: string): Promise<UserDocument> {
+    if (!accessToken || accessToken.length > 8192) {
+      throw new Error('El código de sesión no contiene un token de Google válido.');
+    }
+
+    const credential = GoogleAuthProvider.credential(null, accessToken);
+    const result = await signInWithCredential(auth, credential);
+    return this.saveAuthenticatedUser(result.user);
+  }
+
+  private static async saveAuthenticatedUser(user: import('firebase/auth').User): Promise<UserDocument> {
     const userDoc: UserDocument = {
       uid: user.uid,
       email: user.email || undefined,
-      displayName: user.displayName || 'Jugador',
+      displayName: user.displayName || user.email?.split('@')[0] || 'Jugador',
       createdAt: Date.now()
     };
 

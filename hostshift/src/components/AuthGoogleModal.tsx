@@ -7,7 +7,6 @@ import {
   Loader2,
   Mail,
   UserPlus,
-  Copy,
   KeyRound
 } from 'lucide-react';
 import { UserDocument } from '../types/schema';
@@ -20,6 +19,7 @@ import {
   createUserWithEmailAndPassword 
 } from 'firebase/auth';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { GroupService } from '../services/groupService';
 
 interface AuthGoogleModalProps {
   currentUser: UserDocument | null;
@@ -39,9 +39,6 @@ export const AuthGoogleModal: React.FC<AuthGoogleModalProps> = ({
   const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [copiedCode, setCopiedCode] = useState(false);
-
-  const isBrowser = !(window as any).__TAURI_INTERNALS__;
 
   useEffect(() => {
     // Sincronizar cambios de autenticación en este contexto
@@ -122,32 +119,27 @@ export const AuthGoogleModal: React.FC<AuthGoogleModalProps> = ({
     }
   };
 
-  const handleCopyBrowserSession = () => {
-    if (!currentUser) return;
-    const token = btoa(JSON.stringify(currentUser));
-    navigator.clipboard.writeText(token);
-    setCopiedCode(true);
-    setTimeout(() => setCopiedCode(false), 3000);
-  };
-
-  const handleApplySessionCode = (e: React.FormEvent) => {
+  const handleApplySessionCode = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg(null);
     setSuccessMsg(null);
+    setLoading(true);
 
     try {
       const parsed = JSON.parse(atob(sessionCodeInput.trim()));
-      if (parsed && parsed.uid && parsed.displayName) {
-        onUserChanged(parsed);
-        localStorage.setItem('hostshift_user', JSON.stringify(parsed));
-        setSuccessMsg('¡Sesión vinculada con éxito!');
-        setShowCodeInput(false);
-        setSessionCodeInput('');
-      } else {
-        setErrorMsg('El código de sesión no es válido.');
+      if (typeof parsed?.googleAccessToken !== 'string') {
+        throw new Error('Este código es antiguo o no contiene credenciales de Google. Inicia sesión otra vez en el navegador.');
       }
-    } catch {
-      setErrorMsg('Código no reconocido. Asegúrate de copiarlo completo del navegador.');
+      const user = await GroupService.loginWithGoogleAccessToken(parsed.googleAccessToken);
+      onUserChanged(user);
+      localStorage.setItem('hostshift_user', JSON.stringify(user));
+      setSuccessMsg('¡Sesión de Google vinculada con Firebase!');
+      setShowCodeInput(false);
+      setSessionCodeInput('');
+    } catch (error: any) {
+      setErrorMsg(error.message || 'Código no reconocido. Inicia sesión otra vez en el navegador y copia el código nuevo.');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -234,16 +226,6 @@ export const AuthGoogleModal: React.FC<AuthGoogleModalProps> = ({
             </button>
           </div>
 
-          {/* Si estamos en el navegador web externo, mostrar botón para transferir a la app de escritorio */}
-          {isBrowser && (
-            <button
-              onClick={handleCopyBrowserSession}
-              className="w-full py-1.5 px-2 bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/30 text-emerald-400 rounded-lg text-[10px] font-bold flex items-center justify-center gap-1.5 transition-all"
-            >
-              <Copy className="w-3 h-3" />
-              {copiedCode ? '¡Código Copiado al Portapapeles!' : 'Copiar Código de Sesión a la App'}
-            </button>
-          )}
         </div>
       ) : (
         <div className="space-y-2">
@@ -261,7 +243,7 @@ export const AuthGoogleModal: React.FC<AuthGoogleModalProps> = ({
             {loading ? 'Conectando...' : 'Iniciar Sesión con Google'}
           </button>
 
-          {/* Botón para pegar el código de sesión generado en el navegador */}
+          {/* El código contiene un token de Google que Firebase valida al vincular la sesión. */}
           {!showCodeInput && (
             <button
               onClick={() => setShowCodeInput(true)}
@@ -276,7 +258,7 @@ export const AuthGoogleModal: React.FC<AuthGoogleModalProps> = ({
           {showCodeInput && (
             <form onSubmit={handleApplySessionCode} className="p-2.5 bg-slate-950 border border-slate-800 rounded-xl space-y-2">
               <span className="text-[10px] text-slate-400 block font-medium">
-                Pega el código de sesión copiado desde Chrome/Edge:
+                Pega el código nuevo copiado desde la página de inicio de sesión:
               </span>
               <input
                 type="text"

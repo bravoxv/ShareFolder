@@ -230,27 +230,58 @@ fn get_playit_tunnel_address() -> Result<Option<String>, String> {
     Ok(None)
 }
 
+static AUTH_SERVER_STARTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn ensure_auth_http_server() {
+    if AUTH_SERVER_STARTED.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        return;
+    }
+
+    std::thread::spawn(|| {
+        use std::net::TcpListener;
+        use std::io::{Read, Write};
+
+        let listener = match TcpListener::bind("127.0.0.1:28475") {
+            Ok(l) => l,
+            Err(e) => {
+                eprintln!("No se pudo bindear servidor auth local: {}", e);
+                return;
+            }
+        };
+
+        let html_content = include_str!("../../../google_login.html");
+
+        for stream in listener.incoming() {
+            if let Ok(mut stream) = stream {
+                let mut buffer = [0u8; 1024];
+                let _ = stream.read(&mut buffer);
+
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=UTF-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    html_content.len(),
+                    html_content
+                );
+
+                let _ = stream.write_all(response.as_bytes());
+                let _ = stream.flush();
+            }
+        }
+    });
+}
+
 #[tauri::command]
 fn open_external_url(url: String) -> Result<(), String> {
+    ensure_auth_http_server();
+
     #[cfg(windows)]
     {
         use std::process::Command;
-        let target = if url.starts_with("http://") || url.starts_with("https://") || url.starts_with("file://") {
+        let target = if url == "google_login.html" || url.ends_with("google_login.html") {
+            "http://127.0.0.1:28475".to_string()
+        } else if url.starts_with("http://") || url.starts_with("https://") {
             url
         } else {
-            // Si es un archivo local relativo, resolver su ruta absoluta
-            let mut resolved = std::env::current_dir().unwrap_or_default().join(&url);
-            if !resolved.exists() {
-                if let Ok(exe) = std::env::current_exe() {
-                    if let Some(parent) = exe.parent() {
-                        let candidate = parent.join(&url);
-                        if candidate.exists() {
-                            resolved = candidate;
-                        }
-                    }
-                }
-            }
-            resolved.to_string_lossy().to_string()
+            url
         };
 
         Command::new("cmd")

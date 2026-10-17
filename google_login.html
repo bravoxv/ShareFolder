@@ -128,7 +128,7 @@
   <div class="card">
     <div class="badge">Autenticación Segura</div>
     <h1>HostShift Google Login</h1>
-    <p>Inicia sesión con tu cuenta oficial de Google en tu navegador. Al completar, se generará el código para sincronizarlo con tu aplicación de escritorio.</p>
+    <p>Inicia sesión con Google. Luego copia el código temporal y pégalo en HostShift para crear una sesión Firebase válida.</p>
 
     <div id="error-box" class="error-box"></div>
 
@@ -176,8 +176,14 @@
       errBox.style.display = 'none';
 
       try {
+        googleProvider.addScope('email');
         const result = await auth.signInWithPopup(googleProvider);
         const user = result.user;
+        const credential = result.credential;
+        const accessToken = credential && credential.accessToken;
+        if (!accessToken) {
+          throw new Error('Google no devolvió un token de acceso. Cierra sesión e inténtalo de nuevo.');
+        }
 
         const userDoc = {
           uid: user.uid,
@@ -194,7 +200,8 @@
           console.warn('Firestore sync warning:', e);
         }
 
-        generatedToken = btoa(JSON.stringify(userDoc));
+        // Solo se transfiere el token OAuth; la app valida la credencial con Firebase.
+        generatedToken = btoa(JSON.stringify({ googleAccessToken: accessToken }));
 
         document.getElementById('user-display').innerText = `Conectado como: ${userDoc.displayName} (${userDoc.email})`;
         document.getElementById('session-code').innerText = generatedToken;
@@ -206,7 +213,10 @@
         document.getElementById('copy-btn').innerText = '¡Código Copiado Automáticamente!';
       } catch (err) {
         console.error(err);
-        errBox.innerText = err.message || 'Error al iniciar sesión';
+        const errorCode = err.code || '';
+        errBox.innerText = errorCode === 'auth/unauthorized-domain'
+          ? 'Dominio no autorizado. Añade localhost y 127.0.0.1 en Firebase Console > Authentication > Settings > Authorized domains.'
+          : err.message || 'Error al iniciar sesión';
         errBox.style.display = 'block';
       }
     }

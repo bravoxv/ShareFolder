@@ -8,7 +8,6 @@ import {
   ShieldCheck, 
   Loader2, 
   AlertCircle,
-  Copy,
   FolderOpen,
   UserPlus,
   Globe,
@@ -43,35 +42,27 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
   const [joinInput, setJoinInput] = useState('');
   const [showCodeInput, setShowCodeInput] = useState(false);
   const [sessionCodeInput, setSessionCodeInput] = useState('');
-  const [copiedCode, setCopiedCode] = useState(false);
   const [myGroups, setMyGroups] = useState(() => GroupService.getUserGroups());
 
-  const isBrowser = !(window as any).__TAURI_INTERNALS__;
-
-  // Copiar código de sesión desde el navegador hacia la app
-  const handleCopyBrowserSession = () => {
-    if (!currentUser) return;
-    const token = btoa(JSON.stringify(currentUser));
-    navigator.clipboard.writeText(token);
-    setCopiedCode(true);
-    setTimeout(() => setCopiedCode(false), 3000);
-  };
-
-  // Aplicar código de sesión en la app de escritorio
-  const handleApplySessionCode = (e: React.FormEvent) => {
+  // Aplicar el token de Google emitido por la página de login externa.
+  const handleApplySessionCode = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg(null);
+    setLoading(true);
     try {
       const parsed = JSON.parse(atob(sessionCodeInput.trim()));
-      if (parsed && parsed.uid && parsed.displayName) {
-        onUserChanged(parsed);
-        localStorage.setItem('hostshift_user', JSON.stringify(parsed));
-        setShowCodeInput(false);
-      } else {
-        setErrorMsg('El código de sesión no es válido.');
+      if (typeof parsed?.googleAccessToken !== 'string') {
+        throw new Error('Este código es antiguo o no contiene credenciales de Google. Inicia sesión otra vez en el navegador.');
       }
-    } catch {
-      setErrorMsg('Código no reconocido. Asegúrate de copiarlo completo del navegador.');
+      const user = await GroupService.loginWithGoogleAccessToken(parsed.googleAccessToken);
+      onUserChanged(user);
+      localStorage.setItem('hostshift_user', JSON.stringify(user));
+      setShowCodeInput(false);
+      setSessionCodeInput('');
+    } catch (error: any) {
+      setErrorMsg(error.message || 'Código no reconocido. Inicia sesión otra vez en el navegador y copia el código nuevo.');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -236,6 +227,8 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
                         setErrorMsg('Ventana de Google cerrada antes de completar el inicio de sesión.');
                       } else if (err.code === 'auth/popup-blocked') {
                         setErrorMsg('El navegador interno bloqueó la ventana emergente de Google. Puedes ingresar directamente con Correo/Contraseña abajo o pegar el código.');
+                      } else if (err.code === 'auth/unauthorized-domain') {
+                        setErrorMsg('Firebase no autoriza este dominio local. En Firebase Console > Authentication > Settings > Authorized domains, añade 127.0.0.1 y localhost; reinicia el inicio de sesión después.');
                       } else {
                         setErrorMsg(err.message || 'Error al iniciar sesión con Google.');
                       }
@@ -393,16 +386,6 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
               </div>
 
               <div className="flex items-center gap-2">
-                {isBrowser && (
-                  <button
-                    onClick={handleCopyBrowserSession}
-                    title="Copiar código para llevarlo a la app de escritorio"
-                    className="px-2.5 py-1.5 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-400 border border-emerald-500/30 rounded-lg text-[10px] font-bold flex items-center gap-1.5 transition-all"
-                  >
-                    <Copy className="w-3 h-3" />
-                    {copiedCode ? '¡Copiado!' : 'Copiar a la App'}
-                  </button>
-                )}
                 <button
                   onClick={handleLogout}
                   title="Cerrar sesión de Google"

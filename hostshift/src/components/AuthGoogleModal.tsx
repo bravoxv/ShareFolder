@@ -2,14 +2,16 @@ import React, { useState, useEffect } from 'react';
 import { 
   LogIn, 
   LogOut, 
-  ShieldCheck, 
   CheckCircle2, 
   AlertCircle,
-  Loader2
+  Loader2,
+  Mail,
+  ShieldCheck,
+  Globe
 } from 'lucide-react';
 import { UserDocument } from '../types/schema';
 import { auth, db, googleProvider } from '../services/firebase';
-import { signInWithPopup, signOut, onAuthStateChanged } from 'firebase/auth';
+import { signInWithPopup, signOut, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 
 interface AuthGoogleModalProps {
@@ -23,13 +25,15 @@ export const AuthGoogleModal: React.FC<AuthGoogleModalProps> = ({
 }) => {
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [showEmailFallback, setShowEmailFallback] = useState(false);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
 
   useEffect(() => {
     // Escuchar estado real de autenticación de Firebase
     const unsubscribe = onAuthStateChanged(auth, async (fireUser) => {
       if (fireUser) {
         try {
-          // Consultar o registrar usuario en Firestore
           const userRef = doc(db, 'users', fireUser.uid);
           const snap = await getDoc(userRef);
 
@@ -90,13 +94,56 @@ export const AuthGoogleModal: React.FC<AuthGoogleModalProps> = ({
       localStorage.setItem('hostshift_user', JSON.stringify(userDoc));
     } catch (error: any) {
       console.error('Error durante Google Sign-In:', error);
-      if (error.code === 'auth/popup-closed-by-user') {
+      if (error.code === 'auth/popup-blocked') {
+        setErrorMsg('El WebView de Windows bloqueó la ventana emergente. Puedes usar el inicio con Correo y Contraseña en Firebase aquí abajo.');
+        setShowEmailFallback(true);
+      } else if (error.code === 'auth/popup-closed-by-user') {
         setErrorMsg('Ventana cerrada antes de completar el inicio de sesión.');
       } else if (error.code === 'auth/unauthorized-domain') {
         setErrorMsg('Dominio no autorizado en Firebase. Añade localhost a los dominios autorizados de Auth.');
       } else {
         setErrorMsg(error.message || 'Error al autenticarse con Google');
+        setShowEmailFallback(true);
       }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleEmailAuth = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!email || !password) return;
+    setErrorMsg(null);
+    setLoading(true);
+
+    try {
+      let userCredential;
+      try {
+        // Intenta iniciar sesión
+        userCredential = await signInWithEmailAndPassword(auth, email, password);
+      } catch (err: any) {
+        // Si no existe, lo crea automáticamente en tu Firebase
+        if (err.code === 'auth/user-not-found' || err.code === 'auth/invalid-credential') {
+          userCredential = await createUserWithEmailAndPassword(auth, email, password);
+        } else {
+          throw err;
+        }
+      }
+
+      const user = userCredential.user;
+      const userDoc: UserDocument = {
+        uid: user.uid,
+        displayName: email.split('@')[0],
+        email: user.email || email,
+        createdAt: Date.now()
+      };
+
+      await setDoc(doc(db, 'users', user.uid), userDoc, { merge: true });
+      onUserChanged(userDoc);
+      localStorage.setItem('hostshift_user', JSON.stringify(userDoc));
+      setShowEmailFallback(false);
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Error autenticando en Firebase');
     } finally {
       setLoading(false);
     }
@@ -138,24 +185,76 @@ export const AuthGoogleModal: React.FC<AuthGoogleModalProps> = ({
           </button>
         </div>
       ) : (
-        <button
-          onClick={handleGoogleSignIn}
-          disabled={loading}
-          className="w-full py-2.5 px-3 bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-500 hover:to-indigo-600 disabled:opacity-50 text-white rounded-xl text-xs font-bold shadow-lg shadow-indigo-900/30 flex items-center justify-center gap-2 transition-all hover:scale-[1.02]"
-        >
-          {loading ? (
-            <Loader2 className="w-4 h-4 animate-spin text-white" />
-          ) : (
-            <LogIn className="w-4 h-4" />
+        <div className="space-y-2">
+          <button
+            onClick={handleGoogleSignIn}
+            disabled={loading}
+            className="w-full py-2.5 px-3 bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-500 hover:to-indigo-600 disabled:opacity-50 text-white rounded-xl text-xs font-bold shadow-lg shadow-indigo-900/30 flex items-center justify-center gap-2 transition-all hover:scale-[1.02]"
+          >
+            {loading ? (
+              <Loader2 className="w-4 h-4 animate-spin text-white" />
+            ) : (
+              <LogIn className="w-4 h-4" />
+            )}
+            {loading ? 'Conectando...' : 'Iniciar Sesión con Google'}
+          </button>
+
+          {!showEmailFallback && (
+            <button
+              onClick={() => setShowEmailFallback(true)}
+              className="w-full text-center text-[10px] text-slate-500 hover:text-slate-400 transition-colors py-0.5"
+            >
+              ¿Ventana emergente bloqueada? Iniciar con Correo / Firebase
+            </button>
           )}
-          {loading ? 'Conectando con Google...' : 'Iniciar Sesión con Google'}
-        </button>
+        </div>
       )}
 
       {errorMsg && (
         <div className="mt-2 p-2 bg-rose-500/20 border border-rose-500/30 rounded-lg text-rose-300 text-[11px] flex items-center gap-1.5">
           <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
           <span>{errorMsg}</span>
+        </div>
+      )}
+
+      {showEmailFallback && !currentUser && (
+        <div className="mt-3 p-3 bg-slate-950 border border-slate-800 rounded-xl space-y-2.5 animate-fadeIn">
+          <div className="flex items-center justify-between text-xs font-bold text-slate-300">
+            <span className="flex items-center gap-1.5">
+              <Mail className="w-3.5 h-3.5 text-indigo-400" /> Firebase Auth Directo
+            </span>
+            <button
+              onClick={() => setShowEmailFallback(false)}
+              className="text-[10px] text-slate-500 hover:text-slate-300"
+            >
+              Cerrar
+            </button>
+          </div>
+          <form onSubmit={handleEmailAuth} className="space-y-2">
+            <input
+              type="email"
+              required
+              placeholder="tu-correo@gmail.com"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className="w-full bg-slate-900 border border-slate-700 text-xs text-slate-200 px-2.5 py-1.5 rounded-lg outline-none focus:border-indigo-500"
+            />
+            <input
+              type="password"
+              required
+              placeholder="Contraseña"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className="w-full bg-slate-900 border border-slate-700 text-xs text-slate-200 px-2.5 py-1.5 rounded-lg outline-none focus:border-indigo-500"
+            />
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-bold transition-all disabled:opacity-50"
+            >
+              {loading ? 'Accediendo...' : 'Entrar / Registrar en Firebase'}
+            </button>
+          </form>
         </div>
       )}
     </div>

@@ -1,5 +1,11 @@
 @echo off
-cd /d "%~dp0"
-echo Iniciando Sharefolder Coop Server...
-node server.js
+title HostShift Launcher
+cd /d "%~dp0\hostshift"
+
+echo ====================================================
+echo             Iniciando HostShift Desktop...
+echo ====================================================
+echo.
+
+npm run tauri dev
 pause

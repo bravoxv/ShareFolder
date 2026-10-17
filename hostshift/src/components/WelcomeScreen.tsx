@@ -37,8 +37,6 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'create' | 'join'>('create');
   const [groupNameInput, setGroupNameInput] = useState('');
-  const [serverFolderInput, setServerFolderInput] = useState('');
-  const [launcherFileInput, setLauncherFileInput] = useState('');
   const [joinInput, setJoinInput] = useState('');
   const [showCodeInput, setShowCodeInput] = useState(false);
   const [sessionCodeInput, setSessionCodeInput] = useState('');
@@ -118,14 +116,6 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
         };
       }
 
-      // Si el usuario especificó una carpeta o ejecutable para este servidor, asociarlo
-      if (serverFolderInput.trim() || launcherFileInput.trim()) {
-        GroupService.saveGroupServerConfig(createdGroup.id, {
-          serverFolder: serverFolderInput.trim(),
-          launcherFile: launcherFileInput.trim()
-        });
-      }
-
       GroupService.saveUserGroup(createdGroup, 'owner');
       setMyGroups(GroupService.getUserGroups());
       localStorage.setItem('hostshift_active_group', JSON.stringify(createdGroup));
@@ -189,11 +179,11 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
       <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-indigo-600/10 rounded-full blur-3xl pointer-events-none" />
       <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-cyan-600/10 rounded-full blur-3xl pointer-events-none" />
 
-      <div className="max-w-md w-full bg-slate-900/90 border border-slate-800 rounded-3xl p-8 shadow-2xl backdrop-blur relative z-10 animate-fadeIn">
+      <div className={`w-full ${currentUser ? 'max-w-4xl' : 'max-w-md'} bg-slate-900/90 border border-slate-800 rounded-3xl p-8 shadow-2xl backdrop-blur relative z-10 animate-fadeIn transition-all duration-300`}>
         
         {/* Cabecera / Marca */}
-        <div className="text-center mb-8">
-          <div className="inline-flex items-center gap-2 mb-3">
+        <div className="text-center mb-6">
+          <div className="inline-flex items-center gap-2 mb-2">
             <span className="text-3xl font-black bg-gradient-to-r from-indigo-400 via-cyan-400 to-emerald-400 bg-clip-text text-transparent">
               HostShift
             </span>
@@ -299,9 +289,9 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
             </div>
           </div>
         ) : (
-          /* PASO 2: USUARIO YA AUTENTICADO ➔ CREAR UN GRUPO PRIVADO */
+          /* PASO 2: USUARIO AUTENTICADO ➔ DISTRIBUCIÓN EN 2 COLUMNAS */
           <div className="space-y-6">
-            {/* Tarjeta del usuario logueado */}
+            {/* Barra superior del usuario logueado */}
             <div className="bg-slate-950 p-3.5 rounded-2xl border border-slate-800 flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-full bg-indigo-600/20 border border-indigo-500/40 flex items-center justify-center text-indigo-400 font-black text-sm uppercase">
@@ -339,229 +329,222 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
               </div>
             </div>
 
-            {/* LISTA DE GRUPOS Y SERVIDORES DEL USUARIO */}
-            {myGroups.length > 0 && (
-              <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800 space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-slate-200 flex items-center gap-1.5">
-                    <Server className="w-4 h-4 text-cyan-400" /> Servidores y Grupos Configurados ({myGroups.length})
-                  </span>
-                  <span className="text-[10px] text-slate-500 font-medium">Selecciona uno para abrirlo</span>
+            {/* CUERPO PRINCIPAL: IZQUIERDA (CREAR O UNIRSE) | DERECHA (GRUPOS CREADOS POR EL PROPIETARIO) */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
+              
+              {/* COLUMNA IZQUIERDA: CREAR NUEVO GRUPO O UNIRSE A UNO */}
+              <div className="space-y-4">
+                {/* Selector de Pestaña */}
+                <div className="flex bg-slate-950 p-1 rounded-2xl border border-slate-800">
+                  <button
+                    type="button"
+                    onClick={() => { setActiveTab('create'); setErrorMsg(null); }}
+                    className={`flex-1 py-2 text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-1.5 ${
+                      activeTab === 'create'
+                        ? 'bg-gradient-to-r from-cyan-600 to-indigo-600 text-white shadow-md'
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    <PlusCircle className="w-3.5 h-3.5" /> Crear Grupo
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setActiveTab('join'); setErrorMsg(null); }}
+                    className={`flex-1 py-2 text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-1.5 ${
+                      activeTab === 'join'
+                        ? 'bg-gradient-to-r from-cyan-600 to-indigo-600 text-white shadow-md'
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    <Globe className="w-3.5 h-3.5" /> Unirse a Grupo
+                  </button>
                 </div>
 
-                <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
-                  {myGroups.map(({ group, role }) => {
-                    const cfg = GroupService.getGroupServerConfig(group.id);
-                    return (
-                      <div
-                        key={group.id}
-                        className="group flex items-center justify-between p-3 rounded-xl bg-slate-900/90 hover:bg-slate-850 border border-slate-800 hover:border-cyan-500/40 transition-all cursor-pointer shadow-sm hover:shadow-cyan-950/20"
-                        onClick={() => {
-                          localStorage.setItem('hostshift_active_group', JSON.stringify(group));
-                          onGroupSelected(group, role);
-                        }}
-                      >
-                        <div className="flex-1 min-w-0 pr-3">
-                          <div className="flex items-center gap-2 mb-1">
-                            <span className="text-xs font-bold text-slate-100 group-hover:text-cyan-300 transition-colors truncate">
-                              {group.name}
-                            </span>
-                            <span className={`text-[9px] px-1.5 py-0.5 rounded font-mono uppercase font-bold tracking-wider ${
-                              role === 'owner' 
-                                ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' 
-                                : 'bg-slate-800 text-slate-400 border border-slate-700'
-                            }`}>
-                              {role}
-                            </span>
+                {activeTab === 'create' ? (
+                  /* Formulario limpio para Crear Grupo */
+                  <form onSubmit={handleCreateGroup} className="space-y-4 bg-slate-950/60 p-5 rounded-2xl border border-slate-800/80">
+                    <div>
+                      <label className="text-xs text-slate-300 font-semibold block mb-1.5 flex items-center gap-1.5">
+                        <Users className="w-4 h-4 text-cyan-400" />
+                        Nombre del Nuevo Grupo:
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        placeholder="Ej: Minecraft Survival, Valheim Squad, Palworld..."
+                        value={groupNameInput}
+                        onChange={(e) => setGroupNameInput(e.target.value)}
+                        className="w-full bg-slate-900 border border-slate-700 text-xs font-semibold text-slate-100 px-3.5 py-2.5 rounded-xl outline-none focus:border-cyan-500 placeholder-slate-600"
+                      />
+                    </div>
+
+                    <div className="p-3 bg-indigo-950/30 border border-indigo-500/20 rounded-xl text-[11px] text-slate-400 space-y-1">
+                      <div className="flex items-center gap-1.5 text-indigo-300 font-semibold">
+                        <Sparkles className="w-3.5 h-3.5 text-indigo-400" /> Propietario Legítimo
+                      </div>
+                      <p>
+                        Se creará el grupo en Firebase y serás el <strong>Owner</strong>. Dentro podrás configurar y prender los servidores dedicados.
+                      </p>
+                    </div>
+
+                    <button
+                      type="submit"
+                      disabled={loading}
+                      className="w-full py-3 bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 text-white rounded-xl text-xs font-bold shadow-lg shadow-cyan-900/30 flex items-center justify-center gap-2 transition-all hover:scale-[1.02] disabled:opacity-50"
+                    >
+                      {loading ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <PlusCircle className="w-4 h-4" />
+                      )}
+                      {loading ? 'Creando Grupo en Firebase...' : 'Crear Grupo'}
+                    </button>
+                  </form>
+                ) : (
+                  /* Formulario para Unirse a un Grupo */
+                  <form onSubmit={handleJoinGroup} className="space-y-4 bg-slate-950/60 p-5 rounded-2xl border border-slate-800/80">
+                    <div>
+                      <label className="text-xs text-slate-300 font-semibold block mb-1.5 flex items-center gap-1.5">
+                        <Globe className="w-4 h-4 text-emerald-400" />
+                        Enlace de Invitación o ID de Grupo:
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        placeholder="https://hostshift.gg/join/hs-12345 o grp-uuid..."
+                        value={joinInput}
+                        onChange={(e) => setJoinInput(e.target.value)}
+                        className="w-full bg-slate-900 border border-slate-700 text-xs font-mono text-slate-100 px-3.5 py-2.5 rounded-xl outline-none focus:border-emerald-500 placeholder-slate-600"
+                      />
+                    </div>
+
+                    <div className="p-3 bg-emerald-950/20 border border-emerald-500/20 rounded-xl text-[11px] text-slate-400 space-y-1">
+                      <div className="flex items-center gap-1.5 text-emerald-300 font-semibold">
+                        <UserPlus className="w-3.5 h-3.5 text-emerald-400" /> Conexión Internacional
+                      </div>
+                      <p>
+                        Te unirás al grupo compartido mediante Firebase para sincronizar archivos y conectarte al host.
+                      </p>
+                    </div>
+
+                    <button
+                      type="submit"
+                      disabled={loading}
+                      className="w-full py-3 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-xl text-xs font-bold shadow-lg shadow-emerald-900/30 flex items-center justify-center gap-2 transition-all hover:scale-[1.02] disabled:opacity-50"
+                    >
+                      {loading ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <UserPlus className="w-4 h-4" />
+                      )}
+                      {loading ? 'Verificando con Firebase...' : 'Unirse al Grupo'}
+                    </button>
+                  </form>
+                )}
+              </div>
+
+              {/* COLUMNA DERECHA: GRUPOS CREADOS POR EL PROPIETARIO Y SUS SERVIDORES */}
+              <div className="space-y-3 bg-slate-950/80 p-5 rounded-2xl border border-slate-800">
+                <div className="flex items-center justify-between border-b border-slate-800/80 pb-3">
+                  <div>
+                    <h3 className="text-xs font-bold text-slate-200 flex items-center gap-1.5">
+                      <Server className="w-4 h-4 text-cyan-400" /> Grupos y Servidores ({myGroups.length})
+                    </h3>
+                    <p className="text-[10px] text-slate-500 mt-0.5">
+                      Grupos creados listos para encender
+                    </p>
+                  </div>
+                  <span className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded-full font-mono">
+                    {currentUser.displayName}
+                  </span>
+                </div>
+
+                {myGroups.length === 0 ? (
+                  <div className="text-center py-8 text-slate-500 space-y-2">
+                    <Server className="w-8 h-8 mx-auto text-slate-600 opacity-50" />
+                    <p className="text-xs">Aún no tienes grupos creados.</p>
+                    <p className="text-[11px] text-slate-600">
+                      Usa el panel de la izquierda para crear tu primer grupo.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-2.5 max-h-[380px] overflow-y-auto pr-1">
+                    {myGroups.map(({ group, role }) => {
+                      const cfg = GroupService.getGroupServerConfig(group.id);
+                      return (
+                        <div
+                          key={group.id}
+                          className="group p-3 rounded-xl bg-slate-900 hover:bg-slate-850 border border-slate-800 hover:border-cyan-500/40 transition-all cursor-pointer shadow-sm hover:shadow-cyan-950/20"
+                          onClick={() => {
+                            localStorage.setItem('hostshift_active_group', JSON.stringify(group));
+                            onGroupSelected(group, role);
+                          }}
+                        >
+                          <div className="flex items-center justify-between mb-1.5">
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs font-bold text-slate-100 group-hover:text-cyan-300 transition-colors truncate max-w-[170px]">
+                                {group.name}
+                              </span>
+                              <span className={`text-[9px] px-1.5 py-0.5 rounded font-mono uppercase font-bold tracking-wider ${
+                                role === 'owner' 
+                                  ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' 
+                                  : 'bg-slate-800 text-slate-400 border border-slate-700'
+                              }`}>
+                                {role === 'owner' ? '👑 Owner' : role}
+                              </span>
+                            </div>
+
+                            <button
+                              type="button"
+                              title="Eliminar de mi lista"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                const updated = myGroups.filter(item => item.group.id !== group.id);
+                                localStorage.setItem('hostshift_my_groups', JSON.stringify(updated));
+                                setMyGroups(updated);
+                              }}
+                              className="p-1 text-slate-600 hover:text-rose-400 opacity-20 group-hover:opacity-100 transition-all rounded hover:bg-rose-500/10"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
                           </div>
 
-                          {/* Detalles de la configuración guardada del servidor */}
-                          <div className="space-y-0.5 text-[10px] text-slate-400 font-mono">
-                            {cfg.serverFolder ? (
-                              <div className="flex items-center gap-1 text-indigo-300 truncate">
+                          {/* Servidor configurado en este grupo */}
+                          <div className="bg-slate-950/80 p-2 rounded-lg border border-slate-800/60 mb-2 space-y-1">
+                            <div className="flex items-center justify-between text-[10px]">
+                              <span className="text-slate-400 flex items-center gap-1 font-mono">
+                                <Server className="w-3 h-3 text-cyan-400" /> Servidor:
+                              </span>
+                              <span className="text-slate-300 font-semibold truncate max-w-[140px]">
+                                {cfg.launcherFile ? cfg.launcherFile : 'Listo para asignar'}
+                              </span>
+                            </div>
+
+                            {cfg.serverFolder && (
+                              <div className="text-[10px] text-slate-500 font-mono truncate flex items-center gap-1">
                                 <FolderOpen className="w-3 h-3 text-indigo-400 flex-shrink-0" />
                                 <span className="truncate">{cfg.serverFolder}</span>
                               </div>
-                            ) : (
-                              <div className="text-slate-500 italic">Sin carpeta local asignada</div>
-                            )}
-
-                            {cfg.launcherFile && (
-                              <div className="flex items-center gap-1 text-emerald-400 font-semibold truncate">
-                                <Play className="w-2.5 h-2.5 flex-shrink-0" />
-                                <span>Iniciador: {cfg.launcherFile}</span>
-                              </div>
                             )}
                           </div>
-                        </div>
 
-                        <div className="flex items-center gap-1.5 flex-shrink-0">
-                          <button
-                            type="button"
-                            title="Entrar a este grupo y cargar su servidor"
-                            className="px-2.5 py-1.5 bg-cyan-600/20 hover:bg-cyan-600/30 text-cyan-300 border border-cyan-500/30 rounded-lg text-xs font-bold flex items-center gap-1 transition-all"
-                          >
-                            <span>Abrir</span>
-                            <ChevronRight className="w-3.5 h-3.5" />
-                          </button>
-
-                          <button
-                            type="button"
-                            title="Quitar de mi lista"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              const updated = myGroups.filter(item => item.group.id !== group.id);
-                              localStorage.setItem('hostshift_my_groups', JSON.stringify(updated));
-                              setMyGroups(updated);
-                            }}
-                            className="p-1.5 text-slate-600 hover:text-rose-400 opacity-30 group-hover:opacity-100 transition-all rounded hover:bg-rose-500/10"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
+                          <div className="flex items-center justify-between pt-1">
+                            <span className="text-[10px] text-slate-500 font-mono">
+                              ID: {group.id.slice(0, 8)}...
+                            </span>
+                            <span className="text-xs font-bold text-cyan-400 flex items-center gap-1 group-hover:translate-x-0.5 transition-transform">
+                              <span>Abrir y Prender</span>
+                              <ChevronRight className="w-3.5 h-3.5" />
+                            </span>
+                          </div>
                         </div>
-                      </div>
-                    );
-                  })}
-                </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
-            )}
 
-            {/* Selector de Pestaña: Crear Grupo vs Unirse a Grupo */}
-            <div className="flex bg-slate-950 p-1 rounded-2xl border border-slate-800">
-              <button
-                type="button"
-                onClick={() => { setActiveTab('create'); setErrorMsg(null); }}
-                className={`flex-1 py-2 text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-1.5 ${
-                  activeTab === 'create'
-                    ? 'bg-gradient-to-r from-cyan-600 to-indigo-600 text-white shadow-md'
-                    : 'text-slate-400 hover:text-slate-200'
-                }`}
-              >
-                <PlusCircle className="w-3.5 h-3.5" /> Crear Nuevo Grupo
-              </button>
-              <button
-                type="button"
-                onClick={() => { setActiveTab('join'); setErrorMsg(null); }}
-                className={`flex-1 py-2 text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-1.5 ${
-                  activeTab === 'join'
-                    ? 'bg-gradient-to-r from-cyan-600 to-indigo-600 text-white shadow-md'
-                    : 'text-slate-400 hover:text-slate-200'
-                }`}
-              >
-                <Globe className="w-3.5 h-3.5" /> Unirse a Grupo
-              </button>
             </div>
-
-            {/* OPCIÓN A: CREAR GRUPO */}
-            {activeTab === 'create' ? (
-              <form onSubmit={handleCreateGroup} className="space-y-4">
-                <div>
-                  <label className="text-xs text-slate-300 font-semibold block mb-1.5 flex items-center gap-1.5">
-                    <Users className="w-4 h-4 text-cyan-400" />
-                    Nombre del Servidor / Grupo:
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="Ej: Minecraft Survival, Valheim Squad, Palworld..."
-                    value={groupNameInput}
-                    onChange={(e) => setGroupNameInput(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-700 text-xs font-semibold text-slate-100 px-3.5 py-2.5 rounded-xl outline-none focus:border-cyan-500 placeholder-slate-600"
-                  />
-                </div>
-
-                {/* Carpeta local y archivo iniciador para este servidor (opcional) */}
-                <div className="space-y-3 p-3.5 bg-slate-950/60 rounded-xl border border-slate-800">
-                  <div>
-                    <label className="text-[11px] text-slate-400 font-medium block mb-1 flex items-center gap-1">
-                      <FolderOpen className="w-3.5 h-3.5 text-indigo-400" /> Carpeta del juego/servidor (opcional):
-                    </label>
-                    <input
-                      type="text"
-                      placeholder="Ej: C:\Servidores\MiMinecraft o D:\Juegos\ServerValheim"
-                      value={serverFolderInput}
-                      onChange={(e) => setServerFolderInput(e.target.value)}
-                      className="w-full bg-slate-900 border border-slate-700 text-xs font-mono text-slate-200 px-3 py-2 rounded-lg outline-none focus:border-indigo-500 placeholder-slate-600"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="text-[11px] text-slate-400 font-medium block mb-1 flex items-center gap-1">
-                      <Server className="w-3.5 h-3.5 text-cyan-400" /> Archivo Iniciador (.bat / .exe / .jar) (opcional):
-                    </label>
-                    <input
-                      type="text"
-                      placeholder="Ej: run.bat o start.bat o Server.exe"
-                      value={launcherFileInput}
-                      onChange={(e) => setLauncherFileInput(e.target.value)}
-                      className="w-full bg-slate-900 border border-slate-700 text-xs font-mono text-slate-200 px-3 py-2 rounded-lg outline-none focus:border-indigo-500 placeholder-slate-600"
-                    />
-                  </div>
-                </div>
-
-                <div className="p-3 bg-indigo-950/20 border border-indigo-500/20 rounded-xl text-[11px] text-slate-400 space-y-1">
-                  <div className="flex items-center gap-1.5 text-indigo-300 font-semibold">
-                    <Sparkles className="w-3.5 h-3.5 text-indigo-400" /> Propietario Legítimo
-                  </div>
-                  <p>
-                    Tu cuenta <strong>{currentUser.displayName}</strong> será registrada en Firebase como el <strong>Owner</strong> con control total de este servidor.
-                  </p>
-                </div>
-
-                <button
-                  type="submit"
-                  disabled={loading}
-                  className="w-full py-3 bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 text-white rounded-xl text-xs font-bold shadow-lg shadow-cyan-900/30 flex items-center justify-center gap-2 transition-all hover:scale-[1.02] disabled:opacity-50"
-                >
-                  {loading ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <PlusCircle className="w-4 h-4" />
-                  )}
-                  {loading ? 'Creando Grupo en Firebase...' : 'Crear Servidor/Grupo y Entrar'}
-                </button>
-              </form>
-            ) : (
-              /* OPCIÓN B: UNIRSE A UN GRUPO EXISTENTE */
-              <form onSubmit={handleJoinGroup} className="space-y-4">
-                <div>
-                  <label className="text-xs text-slate-300 font-semibold block mb-1.5 flex items-center gap-1.5">
-                    <Globe className="w-4 h-4 text-emerald-400" />
-                    Enlace de Invitación o ID de Grupo:
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="https://hostshift.gg/join/hs-12345 o grp-uuid..."
-                    value={joinInput}
-                    onChange={(e) => setJoinInput(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-700 text-xs font-mono text-slate-100 px-3.5 py-2.5 rounded-xl outline-none focus:border-emerald-500 placeholder-slate-600"
-                  />
-                </div>
-
-                <div className="p-3 bg-emerald-950/20 border border-emerald-500/20 rounded-xl text-[11px] text-slate-400 space-y-1">
-                  <div className="flex items-center gap-1.5 text-emerald-300 font-semibold">
-                    <UserPlus className="w-3.5 h-3.5 text-emerald-400" /> Conexión Internacional
-                  </div>
-                  <p>
-                    Te unirás al grupo compartido mediante Firebase. Podrás sincronizar los archivos y conectarte al servidor del host.
-                  </p>
-                </div>
-
-                <button
-                  type="submit"
-                  disabled={loading}
-                  className="w-full py-3 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-xl text-xs font-bold shadow-lg shadow-emerald-900/30 flex items-center justify-center gap-2 transition-all hover:scale-[1.02] disabled:opacity-50"
-                >
-                  {loading ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <UserPlus className="w-4 h-4" />
-                  )}
-                  {loading ? 'Verificando con Firebase...' : 'Unirse al Grupo y Entrar'}
-                </button>
-              </form>
-            )}
           </div>
         )}
 

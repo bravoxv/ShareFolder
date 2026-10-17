@@ -826,8 +826,8 @@ export function App() {
       <div className="flex-1 flex flex-col min-w-0 h-full overflow-hidden">
         
         {/* CABECERA PRINCIPAL: BOTÓN ENCENDER / APAGAR Y ESTADO DEL SERVIDOR */}
-        <header className="bg-slate-900/90 backdrop-blur border-b border-slate-800 px-8 py-4 flex items-center justify-between z-10 flex-shrink-0 shadow-lg">
-          <div className="flex items-center gap-4">
+        <header className="bg-slate-900/90 backdrop-blur border-b border-slate-800 px-4 sm:px-6 xl:px-8 py-3 xl:py-3.5 flex flex-col xl:flex-row xl:items-center gap-3 xl:gap-5 z-10 flex-shrink-0 shadow-lg">
+          <div className="flex items-center gap-3 sm:gap-4 min-w-0 w-full xl:flex-1">
             <div className={`w-3.5 h-3.5 rounded-full ${
               serverStatus === 'online' ? 'bg-emerald-400 animate-pulse' :
               serverStatus === 'starting' ? 'bg-amber-400 animate-spin' :
@@ -835,7 +835,7 @@ export function App() {
             }`} />
             <div>
               <div className="flex items-center gap-2.5">
-                <h1 className="text-lg font-bold text-white tracking-tight">Servidor Dedicado Principal</h1>
+                <h1 className="text-base sm:text-lg font-bold text-white tracking-tight">Servidor Dedicado Principal</h1>
                 <span className={`text-[10px] px-2.5 py-0.5 rounded-full font-bold uppercase tracking-wider ${
                   serverStatus === 'online' ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' :
                   serverStatus === 'starting' ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' :
@@ -872,37 +872,38 @@ export function App() {
           </div>
 
           {/* Botonera de Encendido en la Cabecera */}
-          <div className="flex items-center gap-3">
+          <div className="flex items-center justify-start xl:justify-end gap-2 w-full xl:w-auto flex-wrap">
             {serverStatus === 'offline' ? (
               <button
                 onClick={handleStartServer}
                 disabled={!canStartServer || isAutoSyncing}
-                className={`flex items-center gap-2 px-6 py-2.5 rounded-xl font-bold text-sm transition-all shadow-lg ${
+                title={isAutoSyncing ? 'Sincronizando los archivos del grupo' : 'Encender el servidor'}
+                className={`min-h-10 flex items-center justify-center gap-2 px-3 sm:px-4 py-2 rounded-lg font-bold text-xs sm:text-sm whitespace-nowrap transition-all shadow-lg ${
                   !canStartServer || isAutoSyncing
                     ? 'bg-slate-800 text-slate-600 cursor-not-allowed border border-slate-700'
                     : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-900/40 hover:scale-[1.02]'
                 }`}
               >
-                <Power className="w-4 h-4" />
-                {isAutoSyncing ? 'Sincronizando archivos...' : 'Encender Servidor'}
+                <Power className="w-4 h-4 flex-shrink-0" />
+                <span>{isAutoSyncing ? 'Sincronizando...' : 'Encender servidor'}</span>
               </button>
             ) : isOwnerOrAdmin ? (
               <button
                 onClick={handleStopServer}
                 disabled={serverStatus === 'saving'}
-                className="flex items-center gap-2 px-6 py-2.5 bg-rose-600 hover:bg-rose-500 text-white rounded-xl font-bold text-sm transition-all shadow-lg shadow-rose-900/40 hover:scale-[1.02]"
+                className="min-h-10 flex items-center justify-center gap-2 px-3 sm:px-4 py-2 bg-rose-600 hover:bg-rose-500 text-white rounded-lg font-bold text-xs sm:text-sm whitespace-nowrap transition-all shadow-lg shadow-rose-900/40"
               >
-                <Power className="w-4 h-4" />
-                {serverStatus === 'saving' ? 'Guardando y Replicando...' : 'Apagar y Replicar'}
+                <Power className="w-4 h-4 flex-shrink-0" />
+                <span>{serverStatus === 'saving' ? 'Guardando...' : 'Apagar servidor'}</span>
               </button>
             ) : (
-              <span className="text-xs text-slate-400 px-3 py-2">Servidor encendido · solo admin/propietario puede apagarlo</span>
+              <span className="hidden 2xl:inline text-[11px] text-slate-400 px-2 py-2">Servidor encendido · solo admin/propietario puede apagarlo</span>
             )}
 
             {isOwnerOrAdmin && serverStatus === 'online' && (
               <button
                 onClick={handleStopServer}
-                className="flex items-center gap-1.5 px-3 py-2.5 bg-amber-600/20 hover:bg-amber-600/30 text-amber-300 border border-amber-500/30 rounded-xl text-xs font-semibold"
+                className="min-h-10 flex items-center gap-1.5 px-2.5 sm:px-3 py-2 bg-amber-600/20 hover:bg-amber-600/30 text-amber-300 border border-amber-500/30 rounded-lg text-xs font-semibold whitespace-nowrap"
                 title="Forzar liberación en caso de bloqueo"
               >
                 <ShieldAlert className="w-3.5 h-3.5" /> Forzar Liberación
@@ -912,21 +913,21 @@ export function App() {
             {/* Botón Actualizar desde GitHub */}
             <button
               onClick={() => setIsUpdaterOpen(true)}
-              className="flex items-center gap-1.5 px-3.5 py-2.5 bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 rounded-xl text-xs font-bold transition-all shadow-md"
+              className="min-h-10 flex items-center justify-center gap-1.5 px-2.5 sm:px-3 py-2 bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 rounded-lg text-xs font-bold whitespace-nowrap transition-all"
               title="Comprobar y actualizar solo los archivos modificados desde GitHub"
             >
-              <GitBranch className="w-3.5 h-3.5 text-indigo-400" />
-              Actualizaciones
+              <GitBranch className="w-3.5 h-3.5 text-indigo-400 flex-shrink-0" />
+              <span className="hidden sm:inline">Actualizar</span>
             </button>
             {role === 'owner' && (
               <button
                 onClick={() => void handleRequestGroupReload()}
                 disabled={isSendingReloadSignal}
-                className="flex items-center gap-1.5 px-3.5 py-2.5 bg-cyan-600/20 hover:bg-cyan-600/30 disabled:opacity-50 text-cyan-300 border border-cyan-500/30 rounded-xl text-xs font-bold transition-all shadow-md"
+                className="min-h-10 flex items-center justify-center gap-1.5 px-2.5 sm:px-3 py-2 bg-cyan-600/20 hover:bg-cyan-600/30 disabled:opacity-50 text-cyan-300 border border-cyan-500/30 rounded-lg text-xs font-bold whitespace-nowrap transition-all"
                 title="Solicita a todos los miembros conectados que recarguen HostShift"
               >
-                <RefreshCw className={`w-3.5 h-3.5 ${isSendingReloadSignal ? 'animate-spin' : ''}`} />
-                {isSendingReloadSignal ? 'Avisando...' : 'Recargar pantallas'}
+                <RefreshCw className={`w-3.5 h-3.5 flex-shrink-0 ${isSendingReloadSignal ? 'animate-spin' : ''}`} />
+                <span className="hidden sm:inline">{isSendingReloadSignal ? 'Avisando...' : 'Recargar todos'}</span>
               </button>
             )}
           </div>

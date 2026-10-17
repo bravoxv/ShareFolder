@@ -47,9 +47,7 @@ export const GitUpdaterModal: React.FC<GitUpdaterModalProps> = ({
     setResult(null);
 
     try {
-      const updateStatus = await invoke<GitUpdateStatus>('check_git_updates', {
-        repoPath: null
-      });
+      const updateStatus = await invoke<GitUpdateStatus>('check_git_updates');
       setStatus(updateStatus);
     } catch (err: any) {
       console.error('Error comprobando actualizaciones:', err);
@@ -64,9 +62,7 @@ export const GitUpdaterModal: React.FC<GitUpdaterModalProps> = ({
     setErrorMsg(null);
 
     try {
-      const updateResult = await invoke<GitUpdateResult>('apply_git_updates', {
-        repoPath: null
-      });
+      const updateResult = await invoke<GitUpdateResult>('apply_git_updates');
       setResult(updateResult);
       if (updateResult.success) {
         setStatus(prev => prev ? { ...prev, has_updates: false, changed_files: [] } : null);
@@ -121,17 +117,9 @@ export const GitUpdaterModal: React.FC<GitUpdaterModalProps> = ({
               <span>{result.message}</span>
             </div>
             {result.updated_files.length > 0 && (
-              <div className="flex items-center justify-between gap-3">
-                <p className="text-[11px] text-emerald-200">
-                  Se actualizaron {result.updated_files.length} archivo(s).
-                </p>
-                <button
-                  onClick={() => window.location.reload()}
-                  className="shrink-0 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-[11px] font-bold transition-colors"
-                >
-                  Recargar ahora
-                </button>
-              </div>
+              <p className="text-[11px] text-emerald-200">
+                Se descargó la actualización. La aplicación se cerrará y abrirá nuevamente para aplicar los cambios.
+              </p>
             )}
           </div>
         )}
@@ -202,7 +190,7 @@ export const GitUpdaterModal: React.FC<GitUpdaterModalProps> = ({
                 ) : (
                   <DownloadCloud className="w-4 h-4" />
                 )}
-                {updating ? 'Actualizando archivos...' : 'Actualizar Solo Archivos'}
+                {updating ? 'Descargando actualización...' : 'Actualizar y reiniciar'}
               </button>
             )}
           </div>

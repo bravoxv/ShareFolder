@@ -3,25 +3,23 @@ setlocal EnableDelayedExpansion
 title HostShift - Inicializador
 
 REM ========================================================
-REM  1. Localizar la carpeta raiz y el ejecutable
+REM  1. Localizar la carpeta raiz y el ejecutable compilado
 REM ========================================================
 set "SCRIPT_DIR=%~dp0"
 
-REM Buscar si esta en la misma carpeta o en subcarpetas anidadas
 set "EXE_PATH="
 if exist "%SCRIPT_DIR%hostshift\src-tauri\target\release\hostshift.exe" (
     set "EXE_PATH=%SCRIPT_DIR%hostshift\src-tauri\target\release\hostshift.exe"
-) else if exist "%SCRIPT_DIR%hostshift.exe" (
-    set "EXE_PATH=%SCRIPT_DIR%hostshift.exe"
 ) else if exist "%SCRIPT_DIR%bin\HostShift.exe" (
     set "EXE_PATH=%SCRIPT_DIR%bin\HostShift.exe"
+) else if exist "%SCRIPT_DIR%hostshift.exe" (
+    set "EXE_PATH=%SCRIPT_DIR%hostshift.exe"
 ) else if exist "%SCRIPT_DIR%..\hostshift\src-tauri\target\release\hostshift.exe" (
     set "EXE_PATH=%SCRIPT_DIR%..\hostshift\src-tauri\target\release\hostshift.exe"
 )
 
 REM ========================================================
 REM  2. Si existe la version compilada oficial, ejecutarla directamente
-REM     (NO requiere Node.js, npm, Rust ni C++ Build Tools)
 REM ========================================================
 if defined EXE_PATH (
     if exist "!EXE_PATH!" (
@@ -33,18 +31,25 @@ if defined EXE_PATH (
         echo ========================================================
         echo.
         
-        REM Verificar que WebView2 este instalado (viene por defecto en Windows 10/11)
-        reg query "HKLM\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-F301-4FA5-B592-83CA793222F8}" /v pv >nul 2>&1
-        if errorlevel 1 (
-            reg query "HKCU\Software\Microsoft\EdgeUpdate\Clients\{F3017226-F301-4FA5-B592-83CA793222F8}" /v pv >nul 2>&1
-            if errorlevel 1 (
-                echo [AVISO] Microsoft Edge WebView2 Runtime no se detecto.
-                echo HostShift requiere WebView2 para mostrar la interfaz grafica.
-                set /p INST_WV="Deseas descargarlo e instalarlo automaticamente ahora? (S/N): "
-                if /i "!INST_WV!"=="S" (
-                    echo Instalando WebView2 via winget...
-                    winget install --id Microsoft.EdgeWebView2Runtime -e --accept-source-agreements --accept-package-agreements
-                )
+        REM Verificacion REAL y certera de WebView2 (Registro y Archivo fisico)
+        set "TIENE_WV="
+        reg query "HKLM\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\Microsoft EdgeWebView" >nul 2>&1
+        if not errorlevel 1 set "TIENE_WV=1"
+        reg query "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Microsoft EdgeWebView" >nul 2>&1
+        if not errorlevel 1 set "TIENE_WV=1"
+        if exist "%ProgramFiles(x86)%\Microsoft\EdgeWebView\Application" set "TIENE_WV=1"
+        if exist "%ProgramFiles%\Microsoft\EdgeWebView\Application" set "TIENE_WV=1"
+
+        if not defined TIENE_WV (
+            echo [AVISO] No se detecto Microsoft Edge WebView2 Runtime.
+            echo HostShift requiere WebView2 para mostrar la interfaz grafica.
+            set /p INST_WV="Deseas descargarlo e instalarlo automaticamente ahora? (S/N): "
+            if /i "!INST_WV!"=="S" (
+                echo Instalando WebView2 via winget...
+                winget install --id Microsoft.EdgeWebView2Runtime -e --accept-source-agreements --accept-package-agreements
+            ) else (
+                echo Cancelado por el usuario.
+                goto :fin_pausa
             )
         )
         
@@ -75,6 +80,7 @@ if not exist "%APP_DIR%" (
 
 cd /d "%APP_DIR%"
 
+REM Validar Node.js
 where node >nul 2>&1
 if errorlevel 1 (
     echo [FALTA] Node.js no esta instalado.
@@ -82,6 +88,7 @@ if errorlevel 1 (
     goto :fin_pausa
 )
 
+REM Validar Cargo / Rust
 where cargo >nul 2>&1
 if errorlevel 1 (
     echo [FALTA] Rust (cargo) no esta instalado.

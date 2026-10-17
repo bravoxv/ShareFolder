@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { 
@@ -49,6 +49,7 @@ export function App() {
     "HostShift Console - Salida estándar en vivo del juego."
   ]);
   const [terminalInput, setTerminalInput] = useState<string>('');
+  const serverTerminalEndRef = useRef<HTMLDivElement | null>(null);
 
   // SEGUNDA TERMINAL: TÚNEL PLAYIT.GG (Opcional con panel desplegable)
   const [showPlayitPanel, setShowPlayitPanel] = useState<boolean>(false);
@@ -60,6 +61,20 @@ export function App() {
     "HostShift Playit.gg Console - Listo para iniciar el túnel."
   ]);
   const [playitTerminalInput, setPlayitTerminalInput] = useState<string>('');
+  const playitTerminalEndRef = useRef<HTMLDivElement | null>(null);
+
+  // Auto-scroll automático en las terminales cuando llega nuevo texto
+  useEffect(() => {
+    if (serverTerminalEndRef.current) {
+      serverTerminalEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [serverTerminalLogs, activeMainTab]);
+
+  useEffect(() => {
+    if (playitTerminalEndRef.current) {
+      playitTerminalEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [playitTerminalLogs, activeMainTab]);
 
   // Datos del grupo
   const [groupName, setGroupName] = useState<string>('Los Pibes Gaming');
@@ -774,6 +789,7 @@ export function App() {
                       )}
                     </div>
                   ))}
+                  <div ref={serverTerminalEndRef} />
                 </div>
 
                 {/* Barra de entrada de comandos interactivos */}
@@ -925,6 +941,7 @@ export function App() {
                       )}
                     </div>
                   ))}
+                  <div ref={playitTerminalEndRef} />
                 </div>
 
                 {/* Barra de entrada de comandos para playit.gg */}

@@ -45,7 +45,9 @@ export function App() {
   const [isUpdaterOpen, setIsUpdaterOpen] = useState(false);
   const [serverStatus, setServerStatus] = useState<'offline' | 'starting' | 'online' | 'saving'>('offline');
   const [epoch, setEpoch] = useState<number>(1);
-  const [tunnelAddress] = useState<string>('play.hostshift.gg:25565');
+  const [tunnelAddress, setTunnelAddress] = useState<string>(() => {
+    return localStorage.getItem('hostshift_tunnel_address') || 'Detectando túnel...';
+  });
   const [currentHostName, setCurrentHostName] = useState<string | null>(null);
 
   // Navegación animada entre pestañas centrales en la MISMA ventana: 'folder' vs 'console' vs 'roles' vs 'playit'
@@ -216,6 +218,21 @@ export function App() {
           setPlayitStatus('running');
           setPlayitTerminalLogs(prev => [...prev, '[Sistema] Túnel Playit.gg detectado en ejecución.']);
         }
+
+        // Detectar automáticamente la IP/Dirección pública configurada en playit.gg
+        try {
+          const detectedAddr = await invoke<string | null>('get_playit_tunnel_address');
+          if (detectedAddr) {
+            setTunnelAddress(detectedAddr);
+            localStorage.setItem('hostshift_tunnel_address', detectedAddr);
+            setLogs(prev => [...prev, `[Playit.gg] Dirección de túnel detectada: ${detectedAddr}`]);
+          } else {
+            setTunnelAddress(prev => prev === 'Detectando túnel...' ? 'Sin túnel configurado' : prev);
+          }
+        } catch (e) {
+          console.warn('Error detectando IP de playit:', e);
+          setTunnelAddress(prev => prev === 'Detectando túnel...' ? 'Sin túnel configurado' : prev);
+        }
       } catch (err) {
         console.warn('Error verificando estado de procesos activos:', err);
       }
@@ -243,6 +260,19 @@ export function App() {
     setPlayitTerminalLogs((prev) => [...prev, `[Playit] Arrancando túnel desde ejecutable: ${targetExe}`]);
     try {
       await invoke('start_playit_tunnel', { executablePath: targetExe });
+      // Re-consultar dirección del túnel
+      setTimeout(async () => {
+        try {
+          const detectedAddr = await invoke<string | null>('get_playit_tunnel_address');
+          if (detectedAddr) {
+            setTunnelAddress(detectedAddr);
+            localStorage.setItem('hostshift_tunnel_address', detectedAddr);
+            if (activeGroup) {
+              GroupService.saveGroupServerConfig(activeGroup.id, { tunnelAddress: detectedAddr });
+            }
+          }
+        } catch {}
+      }, 2000);
     } catch (err: any) {
       setPlayitStatus('stopped');
       setPlayitTerminalLogs((prev) => [...prev, `[Error Playit] ${err}`]);
@@ -381,6 +411,10 @@ export function App() {
           if (groupCfg.launcherFile) {
             setLauncherFile(groupCfg.launcherFile);
             localStorage.setItem('hostshift_launcher_file', groupCfg.launcherFile);
+          }
+          if (groupCfg.tunnelAddress) {
+            setTunnelAddress(groupCfg.tunnelAddress);
+            localStorage.setItem('hostshift_tunnel_address', groupCfg.tunnelAddress);
           }
 
           setLogs(prev => [
@@ -546,7 +580,17 @@ export function App() {
                   {launcherFile ? `▶ ${launcherFile}` : '⚠️ Ningún archivo seleccionado como iniciador'}
                 </span>
                 <span>&bull; Dirección:</span>
-                <span className="font-mono text-emerald-300 font-medium bg-slate-950 px-2 py-0.5 rounded border border-slate-800">
+                <span 
+                  onClick={() => {
+                    if (tunnelAddress && tunnelAddress !== 'Detectando túnel...' && tunnelAddress !== 'Sin túnel configurado') {
+                      navigator.clipboard.writeText(tunnelAddress);
+                      alert(`Dirección copiada al portapapeles: ${tunnelAddress}`);
+                    }
+                  }}
+                  title="Clic para copiar dirección pública"
+                  className="font-mono text-emerald-300 font-medium bg-slate-950 hover:bg-slate-900 cursor-pointer px-2 py-0.5 rounded border border-slate-800 transition-all flex items-center gap-1.5"
+                >
+                  <Globe className="w-3 h-3 text-cyan-400" />
                   {tunnelAddress}
                 </span>
               </div>

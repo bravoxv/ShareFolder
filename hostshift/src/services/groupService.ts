@@ -277,7 +277,7 @@ export class GroupService {
    */
   static saveGroupServerConfig(
     groupId: string,
-    config: { serverFolder?: string; launcherFile?: string; playitExe?: string }
+    config: { serverFolder?: string; launcherFile?: string; playitExe?: string; tunnelAddress?: string }
   ) {
     try {
       const key = `hostshift_cfg_${groupId}`;
@@ -292,7 +292,7 @@ export class GroupService {
   /**
    * Recupera la configuración de servidor propia de un grupo
    */
-  static getGroupServerConfig(groupId: string): { serverFolder?: string; launcherFile?: string; playitExe?: string } {
+  static getGroupServerConfig(groupId: string): { serverFolder?: string; launcherFile?: string; playitExe?: string; tunnelAddress?: string } {
     try {
       const key = `hostshift_cfg_${groupId}`;
       return JSON.parse(localStorage.getItem(key) || '{}');

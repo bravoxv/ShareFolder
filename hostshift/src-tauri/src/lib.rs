@@ -137,6 +137,100 @@ fn check_playit_status() -> Result<bool, String> {
 }
 
 #[tauri::command]
+fn get_playit_tunnel_address() -> Result<Option<String>, String> {
+    let possible_paths = [
+        "C:\\ProgramData\\playit_gg\\playit.toml",
+    ];
+
+    let mut secret_key: Option<String> = None;
+
+    // 1. Probar en ProgramData
+    for p in possible_paths {
+        if let Ok(content) = std::fs::read_to_string(p) {
+            for line in content.lines() {
+                let trimmed = line.trim();
+                if trimmed.starts_with("secret_key") {
+                    if let Some(val) = trimmed.split('=').nth(1) {
+                        let clean = val.trim().trim_matches('"').trim_matches('\'').trim();
+                        if !clean.is_empty() {
+                            secret_key = Some(clean.to_string());
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        if secret_key.is_some() {
+            break;
+        }
+    }
+
+    // 2. Probar en %LOCALAPPDATA%\playit_gg\playit.toml
+    if secret_key.is_none() {
+        if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
+            let path = format!("{}\\playit_gg\\playit.toml", local_app_data);
+            if let Ok(content) = std::fs::read_to_string(&path) {
+                for line in content.lines() {
+                    let trimmed = line.trim();
+                    if trimmed.starts_with("secret_key") {
+                        if let Some(val) = trimmed.split('=').nth(1) {
+                            let clean = val.trim().trim_matches('"').trim_matches('\'').trim();
+                            if !clean.is_empty() {
+                                secret_key = Some(clean.to_string());
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let key = match secret_key {
+        Some(k) => k,
+        None => return Ok(None),
+    };
+
+    // Consultar el endpoint oficial de playit.gg usando curl del sistema Windows
+    #[cfg(windows)]
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+    let mut cmd = std::process::Command::new("curl.exe");
+    cmd.args([
+        "-s",
+        "-X", "POST",
+        "https://api.playit.gg/v1/agents/rundata",
+        "-H", &format!("Authorization: Agent-Key {}", key),
+        "-H", "Content-Type: application/json",
+        "-d", "{}"
+    ]);
+    #[cfg(windows)]
+    cmd.creation_flags(CREATE_NO_WINDOW);
+
+    let output = cmd.output().map_err(|e| format!("Error ejecutando curl: {}", e))?;
+    if !output.status.success() {
+        return Ok(None);
+    }
+
+    let stdout_str = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout_str)
+        .map_err(|e| format!("Error parseando respuesta playit: {}", e))?;
+
+    if let Some(tunnels) = parsed.get("data").and_then(|d| d.get("tunnels")).and_then(|t| t.as_array()) {
+        for tunnel in tunnels {
+            if let Some(addr) = tunnel.get("display_address").and_then(|a| a.as_str()) {
+                if !addr.is_empty() {
+                    return Ok(Some(addr.to_string()));
+                }
+            }
+        }
+    }
+
+    Ok(None)
+}
+
+#[tauri::command]
 fn open_external_url(url: String) -> Result<(), String> {
     #[cfg(windows)]
     {
@@ -179,6 +273,7 @@ pub fn run() {
             stop_playit_tunnel,
             send_command_to_playit,
             check_playit_status,
+            get_playit_tunnel_address,
             open_external_url,
             sync_auth_session,
             check_git_updates,

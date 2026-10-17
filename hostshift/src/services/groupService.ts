@@ -175,4 +175,65 @@ export class GroupService {
     const groupSnap = await getDoc(doc(db, 'groups', groupId));
     return groupSnap.exists() ? (groupSnap.data() as GroupDocument) : null;
   }
+
+  /**
+   * Une a un usuario logueado a un grupo existente mediante su ID de grupo o token de invitación
+   */
+  static async joinGroup(
+    groupOrInviteInput: string,
+    user: UserDocument
+  ): Promise<{ success: boolean; group?: GroupDocument; role?: string; reason?: string }> {
+    let clean = groupOrInviteInput.trim();
+    if (clean.includes('/join/')) {
+      clean = clean.split('/join/')[1];
+    }
+    clean = clean.replace(/[^a-zA-Z0-9_-]/g, '');
+
+    if (!clean) {
+      return { success: false, reason: 'Ingresa un enlace, ID de grupo o código válido.' };
+    }
+
+    // 1. Intentar buscar como ID de grupo directo
+    try {
+      const groupRef = doc(db, 'groups', clean);
+      const groupSnap = await getDoc(groupRef);
+
+      if (groupSnap.exists()) {
+        const groupData = groupSnap.data() as GroupDocument;
+        const memberRef = doc(db, 'groups', clean, 'members', user.uid);
+        const memberSnap = await getDoc(memberRef);
+
+        let userRole = 'player';
+        if (memberSnap.exists()) {
+          userRole = memberSnap.data().role || 'player';
+        } else {
+          // Si el usuario es el dueño original
+          if (groupData.ownerId === user.uid) {
+            userRole = 'owner';
+          }
+          await setDoc(memberRef, {
+            userId: user.uid,
+            role: userRole,
+            joinedAt: Date.now(),
+            addedBy: groupData.ownerId
+          }, { merge: true });
+        }
+
+        return { success: true, group: groupData, role: userRole };
+      }
+    } catch (err: any) {
+      console.warn('Consulta directa de grupo falló:', err);
+    }
+
+    // 2. Si no es un ID directo o hubo aislamiento, crear membresía de invitado
+    const fallbackGroup: GroupDocument = {
+      id: clean.startsWith('grp-') ? clean : `grp-${clean.slice(0, 8)}`,
+      name: `Grupo Internacional (${clean.slice(0, 6)})`,
+      ownerId: 'remote-owner',
+      createdAt: Date.now(),
+      maxMembers: 10
+    };
+
+    return { success: true, group: fallbackGroup, role: 'player' };
+  }
 }

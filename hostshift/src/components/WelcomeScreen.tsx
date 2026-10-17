@@ -10,7 +10,9 @@ import {
   Loader2, 
   AlertCircle,
   Copy,
-  FolderOpen
+  FolderOpen,
+  UserPlus,
+  Globe
 } from 'lucide-react';
 import { UserDocument, GroupDocument } from '../types/schema';
 import { GroupService } from '../services/groupService';
@@ -18,7 +20,7 @@ import { GroupService } from '../services/groupService';
 interface WelcomeScreenProps {
   currentUser: UserDocument | null;
   onUserChanged: (user: UserDocument | null) => void;
-  onGroupSelected: (group: GroupDocument) => void;
+  onGroupSelected: (group: GroupDocument, role?: string) => void;
 }
 
 export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
@@ -28,7 +30,9 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
 }) => {
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<'create' | 'join'>('create');
   const [groupNameInput, setGroupNameInput] = useState('');
+  const [joinInput, setJoinInput] = useState('');
   const [showCodeInput, setShowCodeInput] = useState(false);
   const [sessionCodeInput, setSessionCodeInput] = useState('');
   const [copiedCode, setCopiedCode] = useState(false);
@@ -107,9 +111,41 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
       }
 
       localStorage.setItem('hostshift_active_group', JSON.stringify(createdGroup));
-      onGroupSelected(createdGroup);
+      onGroupSelected(createdGroup, 'owner');
     } catch (err: any) {
       setErrorMsg(err.message || 'Error al crear el grupo.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Unirse a un grupo internacional existente mediante invitación o ID
+  const handleJoinGroup = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!currentUser) {
+      setErrorMsg('Primero debes iniciar sesión con Google para unirte a un grupo.');
+      return;
+    }
+
+    const input = joinInput.trim();
+    if (!input) {
+      setErrorMsg('Ingresa el enlace de invitación o el ID del grupo.');
+      return;
+    }
+
+    setLoading(true);
+    setErrorMsg(null);
+
+    try {
+      const res = await GroupService.joinGroup(input, currentUser);
+      if (res.success && res.group) {
+        localStorage.setItem('hostshift_active_group', JSON.stringify(res.group));
+        onGroupSelected(res.group, res.role || 'player');
+      } else {
+        setErrorMsg(res.reason || 'No se pudo unir al grupo. Verifica el enlace.');
+      }
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Fallo al unirse al grupo.');
     } finally {
       setLoading(false);
     }
@@ -261,45 +297,113 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
               )}
             </div>
 
-            {/* Formulario de Creación de Grupo */}
-            <form onSubmit={handleCreateGroup} className="space-y-4">
-              <div>
-                <label className="text-xs text-slate-300 font-semibold block mb-1.5 flex items-center gap-1.5">
-                  <Users className="w-4 h-4 text-cyan-400" />
-                  Nombre del Nuevo Grupo Privado:
-                </label>
-                <input
-                  type="text"
-                  required
-                  placeholder="Ej: Los Pibes Gaming, Survival Squad..."
-                  value={groupNameInput}
-                  onChange={(e) => setGroupNameInput(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-700 text-xs font-semibold text-slate-100 px-3.5 py-2.5 rounded-xl outline-none focus:border-cyan-500 placeholder-slate-600"
-                />
-              </div>
-
-              <div className="p-3 bg-indigo-950/20 border border-indigo-500/20 rounded-xl text-[11px] text-slate-400 space-y-1">
-                <div className="flex items-center gap-1.5 text-indigo-300 font-semibold">
-                  <Sparkles className="w-3.5 h-3.5 text-indigo-400" /> Rol Automático
-                </div>
-                <p>
-                  Tu cuenta <strong>{currentUser.displayName}</strong> será registrada en Firebase como el <strong>Propietario Legítimo</strong> con control total de permisos.
-                </p>
-              </div>
-
+            {/* Selector de Pestaña: Crear Grupo vs Unirse a Grupo */}
+            <div className="flex bg-slate-950 p-1 rounded-2xl border border-slate-800">
               <button
-                type="submit"
-                disabled={loading}
-                className="w-full py-3 bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 text-white rounded-xl text-xs font-bold shadow-lg shadow-cyan-900/30 flex items-center justify-center gap-2 transition-all hover:scale-[1.02] disabled:opacity-50"
+                type="button"
+                onClick={() => { setActiveTab('create'); setErrorMsg(null); }}
+                className={`flex-1 py-2 text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-1.5 ${
+                  activeTab === 'create'
+                    ? 'bg-gradient-to-r from-cyan-600 to-indigo-600 text-white shadow-md'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
               >
-                {loading ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : (
-                  <PlusCircle className="w-4 h-4" />
-                )}
-                {loading ? 'Creando Grupo en Firebase...' : 'Crear Grupo y Entrar al Panel'}
+                <PlusCircle className="w-3.5 h-3.5" /> Crear Grupo
               </button>
-            </form>
+              <button
+                type="button"
+                onClick={() => { setActiveTab('join'); setErrorMsg(null); }}
+                className={`flex-1 py-2 text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-1.5 ${
+                  activeTab === 'join'
+                    ? 'bg-gradient-to-r from-cyan-600 to-indigo-600 text-white shadow-md'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <Globe className="w-3.5 h-3.5" /> Unirse a Grupo
+              </button>
+            </div>
+
+            {/* OPCIÓN A: CREAR GRUPO */}
+            {activeTab === 'create' ? (
+              <form onSubmit={handleCreateGroup} className="space-y-4">
+                <div>
+                  <label className="text-xs text-slate-300 font-semibold block mb-1.5 flex items-center gap-1.5">
+                    <Users className="w-4 h-4 text-cyan-400" />
+                    Nombre del Nuevo Grupo Privado:
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="Ej: Los Pibes Gaming, Survival Squad..."
+                    value={groupNameInput}
+                    onChange={(e) => setGroupNameInput(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-700 text-xs font-semibold text-slate-100 px-3.5 py-2.5 rounded-xl outline-none focus:border-cyan-500 placeholder-slate-600"
+                  />
+                </div>
+
+                <div className="p-3 bg-indigo-950/20 border border-indigo-500/20 rounded-xl text-[11px] text-slate-400 space-y-1">
+                  <div className="flex items-center gap-1.5 text-indigo-300 font-semibold">
+                    <Sparkles className="w-3.5 h-3.5 text-indigo-400" /> Rol Automático
+                  </div>
+                  <p>
+                    Tu cuenta <strong>{currentUser.displayName}</strong> será registrada en Firebase como el <strong>Propietario Legítimo</strong> con control total de permisos.
+                  </p>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="w-full py-3 bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 text-white rounded-xl text-xs font-bold shadow-lg shadow-cyan-900/30 flex items-center justify-center gap-2 transition-all hover:scale-[1.02] disabled:opacity-50"
+                >
+                  {loading ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <PlusCircle className="w-4 h-4" />
+                  )}
+                  {loading ? 'Creando Grupo en Firebase...' : 'Crear Grupo y Entrar al Panel'}
+                </button>
+              </form>
+            ) : (
+              /* OPCIÓN B: UNIRSE A UN GRUPO EXISTENTE */
+              <form onSubmit={handleJoinGroup} className="space-y-4">
+                <div>
+                  <label className="text-xs text-slate-300 font-semibold block mb-1.5 flex items-center gap-1.5">
+                    <Globe className="w-4 h-4 text-emerald-400" />
+                    Enlace de Invitación o ID de Grupo:
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="https://hostshift.gg/join/hs-12345 o grp-uuid..."
+                    value={joinInput}
+                    onChange={(e) => setJoinInput(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-700 text-xs font-mono text-slate-100 px-3.5 py-2.5 rounded-xl outline-none focus:border-emerald-500 placeholder-slate-600"
+                  />
+                </div>
+
+                <div className="p-3 bg-emerald-950/20 border border-emerald-500/20 rounded-xl text-[11px] text-slate-400 space-y-1">
+                  <div className="flex items-center gap-1.5 text-emerald-300 font-semibold">
+                    <UserPlus className="w-3.5 h-3.5 text-emerald-400" /> Conexión Internacional
+                  </div>
+                  <p>
+                    Te unirás al grupo compartido mediante Firebase. Podrás sincronizar los archivos y conectarte al servidor del host.
+                  </p>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="w-full py-3 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-xl text-xs font-bold shadow-lg shadow-emerald-900/30 flex items-center justify-center gap-2 transition-all hover:scale-[1.02] disabled:opacity-50"
+                >
+                  {loading ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <UserPlus className="w-4 h-4" />
+                  )}
+                  {loading ? 'Verificando con Firebase...' : 'Unirse al Grupo y Entrar'}
+                </button>
+              </form>
+            )}
           </div>
         )}
 

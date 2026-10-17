@@ -49,7 +49,7 @@ export function App() {
     "HostShift Console - Salida estándar en vivo del juego."
   ]);
   const [terminalInput, setTerminalInput] = useState<string>('');
-  const serverTerminalEndRef = useRef<HTMLDivElement | null>(null);
+  const serverTerminalContainerRef = useRef<HTMLDivElement | null>(null);
 
   // SEGUNDA TERMINAL: TÚNEL PLAYIT.GG (Opcional con panel desplegable)
   const [showPlayitPanel, setShowPlayitPanel] = useState<boolean>(false);
@@ -61,20 +61,20 @@ export function App() {
     "HostShift Playit.gg Console - Listo para iniciar el túnel."
   ]);
   const [playitTerminalInput, setPlayitTerminalInput] = useState<string>('');
-  const playitTerminalEndRef = useRef<HTMLDivElement | null>(null);
+  const playitTerminalContainerRef = useRef<HTMLDivElement | null>(null);
 
-  // Auto-scroll automático en las terminales cuando llega nuevo texto
+  // Auto-scroll exclusivo dentro de la cajita negra de la terminal (sin mover la ventana principal)
   useEffect(() => {
-    if (serverTerminalEndRef.current) {
-      serverTerminalEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    if (serverTerminalContainerRef.current) {
+      serverTerminalContainerRef.current.scrollTop = serverTerminalContainerRef.current.scrollHeight;
     }
-  }, [serverTerminalLogs, activeMainTab]);
+  }, [serverTerminalLogs]);
 
   useEffect(() => {
-    if (playitTerminalEndRef.current) {
-      playitTerminalEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    if (playitTerminalContainerRef.current) {
+      playitTerminalContainerRef.current.scrollTop = playitTerminalContainerRef.current.scrollHeight;
     }
-  }, [playitTerminalLogs, activeMainTab]);
+  }, [playitTerminalLogs]);
 
   // Datos del grupo
   const [groupName, setGroupName] = useState<string>('Los Pibes Gaming');
@@ -775,7 +775,7 @@ export function App() {
                 </div>
 
                 {/* Área de texto de la terminal estilo Linux/Win32 */}
-                <div className="flex-1 bg-slate-950 rounded-xl border border-slate-800 p-4 font-mono text-xs text-slate-200 overflow-y-auto space-y-1">
+                <div ref={serverTerminalContainerRef} className="flex-1 bg-slate-950 rounded-xl border border-slate-800 p-4 font-mono text-xs text-slate-200 overflow-y-auto space-y-1">
                   {serverTerminalLogs.map((line, idx) => (
                     <div key={idx} className="leading-relaxed">
                       {line.startsWith('>') ? (
@@ -789,7 +789,6 @@ export function App() {
                       )}
                     </div>
                   ))}
-                  <div ref={serverTerminalEndRef} />
                 </div>
 
                 {/* Barra de entrada de comandos interactivos */}
@@ -931,7 +930,7 @@ export function App() {
                 </div>
 
                 {/* SEGUNDA TERMINAL EN VIVO: SALIDA DE PLAYIT.GG */}
-                <div className="flex-1 bg-slate-950 rounded-xl border border-slate-800 p-4 font-mono text-xs text-slate-200 overflow-y-auto space-y-1">
+                <div ref={playitTerminalContainerRef} className="flex-1 bg-slate-950 rounded-xl border border-slate-800 p-4 font-mono text-xs text-slate-200 overflow-y-auto space-y-1">
                   {playitTerminalLogs.map((log, i) => (
                     <div key={i} className="leading-relaxed text-[11px] text-slate-300">
                       {log.startsWith('>') ? (
@@ -941,7 +940,6 @@ export function App() {
                       )}
                     </div>
                   ))}
-                  <div ref={playitTerminalEndRef} />
                 </div>
 
                 {/* Barra de entrada de comandos para playit.gg */}

@@ -220,7 +220,7 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
                 </p>
               </div>
 
-              <div className="space-y-2 pt-1">
+              <div className="space-y-3 pt-1">
                 <button
                   onClick={async () => {
                     setLoading(true);
@@ -232,6 +232,8 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
                       console.error('Google Sign-In Error:', err);
                       if (err.code === 'auth/popup-closed-by-user') {
                         setErrorMsg('Ventana de Google cerrada antes de completar el inicio de sesión.');
+                      } else if (err.code === 'auth/popup-blocked') {
+                        setErrorMsg('El navegador interno bloqueó la ventana emergente de Google. Puedes ingresar directamente con Correo/Contraseña abajo o pegar el código.');
                       } else {
                         setErrorMsg(err.message || 'Error al iniciar sesión con Google.');
                       }
@@ -246,42 +248,109 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
                   {loading ? 'Conectando con Google...' : 'Iniciar Sesión con Google'}
                 </button>
 
-                  {!showCodeInput ? (
+                {/* Formulario alternativo de Correo / Contraseña */}
+                <div className="border-t border-slate-800/80 pt-3 mt-2">
+                  <div className="text-[11px] text-slate-400 font-semibold mb-2">
+                    O ingresa directamente con correo y contraseña:
+                  </div>
+                  <form
+                    onSubmit={async (e) => {
+                      e.preventDefault();
+                      const form = e.currentTarget;
+                      const emailVal = (form.elements.namedItem('authEmail') as HTMLInputElement).value;
+                      const passVal = (form.elements.namedItem('authPass') as HTMLInputElement).value;
+                      if (!emailVal || !passVal) return;
+                      setLoading(true);
+                      setErrorMsg(null);
+                      try {
+                        const { signInWithEmailAndPassword, createUserWithEmailAndPassword } = await import('firebase/auth');
+                        const { auth } = await import('../services/firebase');
+                        let cred;
+                        try {
+                          cred = await signInWithEmailAndPassword(auth, emailVal.trim(), passVal);
+                        } catch (errLogin: any) {
+                          if (errLogin.code === 'auth/user-not-found' || errLogin.code === 'auth/invalid-credential') {
+                            cred = await createUserWithEmailAndPassword(auth, emailVal.trim(), passVal);
+                          } else {
+                            throw errLogin;
+                          }
+                        }
+                        const uDoc: UserDocument = {
+                          uid: cred.user.uid,
+                          displayName: emailVal.split('@')[0],
+                          email: cred.user.email || emailVal,
+                          createdAt: Date.now()
+                        };
+                        onUserChanged(uDoc);
+                        localStorage.setItem('hostshift_user', JSON.stringify(uDoc));
+                      } catch (err: any) {
+                        setErrorMsg(err.message || 'Error de autenticación');
+                      } finally {
+                        setLoading(false);
+                      }
+                    }}
+                    className="space-y-2 text-left"
+                  >
+                    <input
+                      name="authEmail"
+                      type="email"
+                      required
+                      placeholder="tucorreo@ejemplo.com"
+                      className="w-full bg-slate-900 border border-slate-800 text-xs text-slate-200 px-3 py-2 rounded-xl outline-none focus:border-indigo-500"
+                    />
+                    <input
+                      name="authPass"
+                      type="password"
+                      required
+                      placeholder="Contraseña (mínimo 6 caracteres)"
+                      className="w-full bg-slate-900 border border-slate-800 text-xs text-slate-200 px-3 py-2 rounded-xl outline-none focus:border-indigo-500"
+                    />
                     <button
-                      onClick={() => setShowCodeInput(true)}
-                      className="text-xs text-emerald-400 hover:text-emerald-300 font-medium py-1 flex items-center justify-center gap-1.5 mx-auto transition-colors"
+                      type="submit"
+                      disabled={loading}
+                      className="w-full py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-bold transition-all"
                     >
-                      <KeyRound className="w-3.5 h-3.5" />
-                      ¿Ya iniciaste en Chrome/Edge? Pegar código
+                      Entrar / Registrarme
                     </button>
-                  ) : (
-                    <form onSubmit={handleApplySessionCode} className="pt-2 space-y-2 text-left">
-                      <input
-                        type="text"
-                        required
-                        placeholder="Pega el código copiado aquí..."
-                        value={sessionCodeInput}
-                        onChange={(e) => setSessionCodeInput(e.target.value)}
-                        className="w-full bg-slate-900 border border-slate-700 text-xs font-mono text-slate-200 px-3 py-2 rounded-xl outline-none focus:border-emerald-500"
-                      />
-                      <div className="flex gap-2">
-                        <button
-                          type="submit"
-                          className="flex-1 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold transition-all"
-                        >
-                          Vincular Sesión
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setShowCodeInput(false)}
-                          className="px-3 py-1.5 bg-slate-800 text-slate-400 rounded-lg text-xs"
-                        >
-                          Cancelar
-                        </button>
-                      </div>
-                    </form>
-                  )}
+                  </form>
                 </div>
+
+                {!showCodeInput ? (
+                  <button
+                    onClick={() => setShowCodeInput(true)}
+                    className="text-xs text-emerald-400 hover:text-emerald-300 font-medium pt-2 flex items-center justify-center gap-1.5 mx-auto transition-colors"
+                  >
+                    <KeyRound className="w-3.5 h-3.5" />
+                    ¿Ya iniciaste en Chrome/Edge? Pegar código
+                  </button>
+                ) : (
+                  <form onSubmit={handleApplySessionCode} className="pt-2 space-y-2 text-left">
+                    <input
+                      type="text"
+                      required
+                      placeholder="Pega el código copiado aquí..."
+                      value={sessionCodeInput}
+                      onChange={(e) => setSessionCodeInput(e.target.value)}
+                      className="w-full bg-slate-900 border border-slate-700 text-xs font-mono text-slate-200 px-3 py-2 rounded-xl outline-none focus:border-emerald-500"
+                    />
+                    <div className="flex gap-2">
+                      <button
+                        type="submit"
+                        className="flex-1 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold transition-all"
+                      >
+                        Vincular Sesión
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setShowCodeInput(false)}
+                        className="px-3 py-1.5 bg-slate-800 text-slate-400 rounded-lg text-xs"
+                      >
+                        Cancelar
+                      </button>
+                    </div>
+                  </form>
+                )}
+              </div>
             </div>
           </div>
         ) : (

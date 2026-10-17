@@ -18,36 +18,105 @@ pub struct GitUpdateResult {
     pub message: String,
 }
 
+fn find_git_repo(start_path: &std::path::Path) -> Option<std::path::PathBuf> {
+    let mut curr = start_path.to_path_buf();
+    for _ in 0..10 {
+        if curr.join(".git").exists() {
+            return Some(curr);
+        }
+        if !curr.pop() {
+            break;
+        }
+    }
+    None
+}
+
 /// Comprueba si hay nuevos commits en GitHub y lista qué archivos cambiaron
 #[tauri::command]
 pub fn check_git_updates(repo_path: Option<String>) -> Result<GitUpdateStatus, String> {
-    let working_dir = repo_path.unwrap_or_else(|| ".".into());
+    // 1. Intentar localizar la carpeta raíz del repositorio que contiene `.git`
+    let determined_dir = if let Some(ref p) = repo_path {
+        std::path::PathBuf::from(p)
+    } else {
+        let mut candidates = vec![
+            std::env::current_dir().unwrap_or_default(),
+        ];
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(parent) = exe.parent() {
+                candidates.push(parent.to_path_buf());
+            }
+        }
+        
+        let mut found = None;
+        for c in candidates {
+            if let Some(r) = find_git_repo(&c) {
+                found = Some(r);
+                break;
+            }
+        }
+        found.unwrap_or_else(|| std::path::PathBuf::from("."))
+    };
 
-    // 1. Obtener commit local actual
+    let working_dir = determined_dir.to_string_lossy().to_string();
+
+    // 2. Obtener commit local actual via git rev-parse
     let local_output = Command::new("git")
         .args(["rev-parse", "HEAD"])
         .current_dir(&working_dir)
-        .output()
-        .map_err(|e| format!("Fallo al ejecutar git rev-parse: {}", e))?;
+        .output();
 
-    if !local_output.status.success() {
-        return Err(String::from_utf8_lossy(&local_output.stderr).to_string());
-    }
+    let current_commit = match local_output {
+        Ok(out) if out.status.success() => {
+            String::from_utf8_lossy(&out.stdout).trim().to_string()
+        }
+        _ => {
+            // Fallback si no está en un repo git o git no está instalado: consultar GitHub API
+            #[cfg(windows)]
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x08000000;
 
-    let current_commit = String::from_utf8_lossy(&local_output.stdout).trim().to_string();
+            let mut cmd = Command::new("curl.exe");
+            cmd.args([
+                "-s",
+                "-H", "User-Agent: HostShift-App",
+                "https://api.github.com/repos/bravoxv/ShareFolder/commits/main"
+            ]);
+            #[cfg(windows)]
+            cmd.creation_flags(CREATE_NO_WINDOW);
 
-    // 2. Fetch silencioso desde el repositorio remoto (origin)
+            if let Ok(c_out) = cmd.output() {
+                if c_out.status.success() {
+                    let text = String::from_utf8_lossy(&c_out.stdout);
+                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
+                        if let Some(sha) = v.get("sha").and_then(|s| s.as_str()) {
+                            let short_sha = sha.chars().take(7).collect::<String>();
+                            return Ok(GitUpdateStatus {
+                                has_updates: false,
+                                current_commit: short_sha.clone(),
+                                remote_commit: short_sha,
+                                modified_files: vec![],
+                            });
+                        }
+                    }
+                }
+            }
+
+            return Err("Esta copia de HostShift se ejecuta en modo portable sin repositorio Git local.".into());
+        }
+    };
+
+    // 3. Fetch silencioso desde el repositorio remoto (origin)
     let fetch_output = Command::new("git")
         .args(["fetch", "origin", "main"])
         .current_dir(&working_dir)
         .output()
-        .map_err(|e| format!("Fallo al ejecutar git fetch: {}", e))?;
+        .map_err(|e| format!("Fallo al contactar git: {}", e))?;
 
     if !fetch_output.status.success() {
         return Err(format!("No se pudo contactar a GitHub: {}", String::from_utf8_lossy(&fetch_output.stderr)));
     }
 
-    // 3. Obtener commit remoto de origin/main
+    // 4. Obtener commit remoto de origin/main
     let remote_output = Command::new("git")
         .args(["rev-parse", "origin/main"])
         .current_dir(&working_dir)
@@ -60,7 +129,7 @@ pub fn check_git_updates(repo_path: Option<String>) -> Result<GitUpdateStatus, S
     let mut modified_files = Vec::new();
 
     if has_updates {
-        // 4. Obtener la lista exacta de archivos modificados entre local y remoto
+        // 5. Obtener la lista exacta de archivos modificados entre local y remoto
         let diff_output = Command::new("git")
             .args(["diff", "--name-only", &current_commit, &remote_commit])
             .current_dir(&working_dir)
@@ -89,7 +158,28 @@ pub fn check_git_updates(repo_path: Option<String>) -> Result<GitUpdateStatus, S
 /// Aplica la actualización descargando e integrando únicamente los archivos modificados
 #[tauri::command]
 pub fn apply_git_updates(repo_path: Option<String>) -> Result<GitUpdateResult, String> {
-    let working_dir = repo_path.unwrap_or_else(|| ".".into());
+    let determined_dir = if let Some(ref p) = repo_path {
+        std::path::PathBuf::from(p)
+    } else {
+        let mut candidates = vec![
+            std::env::current_dir().unwrap_or_default(),
+        ];
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(parent) = exe.parent() {
+                candidates.push(parent.to_path_buf());
+            }
+        }
+        let mut found = None;
+        for c in candidates {
+            if let Some(r) = find_git_repo(&c) {
+                found = Some(r);
+                break;
+            }
+        }
+        found.unwrap_or_else(|| std::path::PathBuf::from("."))
+    };
+
+    let working_dir = determined_dir.to_string_lossy().to_string();
 
     // 1. Obtener archivos que cambiarán antes de hacer pull
     let status = check_git_updates(Some(working_dir.clone()))?;

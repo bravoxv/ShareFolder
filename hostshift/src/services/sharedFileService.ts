@@ -48,7 +48,7 @@ export async function uploadServerFiles(groupId: string, serverFolder: string, u
       for (let index = 0; index < count; index++) {
         const offset = index * SHARED_FILE_CHUNK_BYTES;
         const length = Math.min(SHARED_FILE_CHUNK_BYTES, Math.max(0, file.size_bytes - offset));
-        const raw = await invoke<number[]>('read_server_file_chunk', { basePath: serverFolder, relativePath: file.relative_path, offset, chunkSize: length });
+        const raw = await invoke<ArrayBuffer>('read_server_file_chunk', { basePath: serverFolder, relativePath: file.relative_path, offset, chunkSize: length });
         await uploadChunk(`${storagePath}/${chunkName(index)}`, new Uint8Array(raw), { relativePath: file.relative_path, uploadedBy: user.uid }, fraction => report(fraction));
         uploaded++;
         completedChunks++;
@@ -74,7 +74,7 @@ export async function uploadServerFiles(groupId: string, serverFolder: string, u
   return files.length;
 }
 
-export async function downloadSharedFiles(files: SharedFileDocument[], serverFolder: string, onProgress: (completed: number, total: number) => void): Promise<number> {
+export async function downloadSharedFiles(files: SharedFileDocument[], serverFolder: string, onProgress: (completed: number, total: number) => void, onFileComplete?: (file: SharedFileDocument) => void): Promise<number> {
   if (!files.length) throw new Error('Este grupo aún no tiene archivos compartidos.');
   const totalChunks = files.reduce((sum, file) => sum + (file.chunkCount || 1), 0);
   let completed = 0;
@@ -88,11 +88,18 @@ export async function downloadSharedFiles(files: SharedFileDocument[], serverFol
         const path = file.chunkCount ? `${file.storagePath}/${chunkName(index)}` : file.storagePath;
         const bytes = new Uint8Array(await getBytes(ref(storage, path)));
         const offset = file.chunkCount ? index * (file.chunkSize || SHARED_FILE_CHUNK_BYTES) : 0;
-        await invoke('write_server_file_chunk', { basePath: serverFolder, fileId, offset, content: Array.from(bytes) });
+        await invoke('write_server_file_chunk', bytes, {
+          headers: {
+            'x-base-path': encodeURIComponent(serverFolder),
+            'x-file-id': fileId,
+            'x-file-offset': String(offset)
+          }
+        });
         completed++;
         onProgress(completed, totalChunks);
       }
       await invoke('finish_server_file_download', { basePath: serverFolder, relativePath: file.relativePath, fileId, totalSize: size });
+      onFileComplete?.(file);
     } catch (error) {
       await invoke('cancel_server_file_download', { basePath: serverFolder, fileId }).catch(() => undefined);
       throw error;

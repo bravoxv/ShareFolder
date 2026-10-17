@@ -11,19 +11,24 @@ service firebase.storage {
         firestore.get(/databases/(default)/documents/groups/$(groupId)/members/$(request.auth.uid)).data.role in ['admin', 'owner'];
     }
 
+    function isGroupHost(groupId) {
+      return isGroupMember(groupId) &&
+        firestore.get(/databases/(default)/documents/groups/$(groupId)/members/$(request.auth.uid)).data.role == 'host';
+    }
+
     match /groups/{groupId}/shared-files/{fileId}/{revision}/{chunkName} {
       allow read: if isGroupMember(groupId);
-      allow create, update: if isGroupMember(groupId) &&
+      allow create, update: if isGroupMember(groupId) && !isGroupHost(groupId) &&
         request.resource.size <= 8 * 1024 * 1024;
-      allow delete: if isGroupAdmin(groupId) ||
-        (isGroupMember(groupId) && resource.metadata.uploadedBy == request.auth.uid);
+      allow delete: if isGroupAdmin(groupId) || (!isGroupHost(groupId) &&
+        isGroupMember(groupId) && resource.metadata.uploadedBy == request.auth.uid);
     }
 
     // Permite descargar/eliminar archivos compartidos antes del cambio a bloques.
     match /groups/{groupId}/shared-files/{fileId} {
       allow read: if isGroupMember(groupId);
-      allow delete: if isGroupAdmin(groupId) ||
-        (isGroupMember(groupId) && resource.metadata.uploadedBy == request.auth.uid);
+      allow delete: if isGroupAdmin(groupId) || (!isGroupHost(groupId) &&
+        isGroupMember(groupId) && resource.metadata.uploadedBy == request.auth.uid);
     }
   }
 }

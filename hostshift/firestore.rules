@@ -23,6 +23,26 @@ service cloud.firestore {
       return isGroupMember(groupId) && getMemberRole(groupId) == 'owner';
     }
 
+    function isGroupHost(groupId) {
+      return isGroupMember(groupId) && getMemberRole(groupId) == 'host';
+    }
+
+    // A host may claim/renew its server lease, but cannot edit configuration,
+    // snapshots, shared files, or release/stop a running server.
+    function hostCanStartOrRenewServer(groupId) {
+      return isGroupHost(groupId) &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lease', 'status', 'updatedAt']) &&
+        request.resource.data.lease is map &&
+        request.resource.data.lease.currentHostId == request.auth.uid &&
+        request.resource.data.lease.leaseToken is string &&
+        request.resource.data.lease.leaseExpiresAt is number &&
+        request.resource.data.lease.leaseExpiresAt > request.time.toMillis() &&
+        request.resource.data.lease.leaseExpiresAt <= request.time.toMillis() + 30000 &&
+        request.resource.data.lease.epoch is int &&
+        request.resource.data.status in ['starting', 'online'] &&
+        (resource.data.lease.currentHostId == null || resource.data.lease.currentHostId == request.auth.uid);
+    }
+
     match /users/{userId} {
       allow read: if isAuthenticated();
       allow write: if isAuthenticated() && request.auth.uid == userId;
@@ -66,13 +86,13 @@ service cloud.firestore {
 
       match /shared_files/{fileId} {
         allow read: if isGroupMember(groupId);
-        allow create, update: if isGroupMember(groupId) &&
+        allow create, update: if isGroupMember(groupId) && !isGroupHost(groupId) &&
           request.resource.data.uploadedBy == request.auth.uid &&
           request.resource.data.sizeBytes >= 0 &&
           request.resource.data.chunkCount > 0 &&
           request.resource.data.chunkCount <= 1000000 &&
           request.resource.data.chunkSize == 8 * 1024 * 1024;
-        allow delete: if isGroupMember(groupId) &&
+        allow delete: if isGroupMember(groupId) && !isGroupHost(groupId) &&
           (isGroupAdmin(groupId) || resource.data.uploadedBy == request.auth.uid);
       }
 
@@ -93,25 +113,18 @@ service cloud.firestore {
         allow read: if isGroupMember(groupId);
         allow create, delete: if isGroupAdmin(groupId);
         
-        // Updates: admin can update anything. 
-        // A candidate host can only update the lease/heartbeat/state if claiming or maintaining the lease.
-        allow update: if isGroupAdmin(groupId) || (
-          isGroupMember(groupId) &&
-          // Verify candidate has host permission
-          (getMemberRole(groupId) in ['host', 'admin', 'owner'])
-        );
+        // Admin/owner control server configuration. Hosts can only claim/renew a lease to start it.
+        allow update: if isGroupAdmin(groupId) || hostCanStartOrRenewServer(groupId);
 
         match /snapshots/{snapshotId} {
           allow read: if isGroupMember(groupId);
-          // Only the current active host can record snapshots
-          allow create: if isGroupMember(groupId) &&
-            request.resource.data.authorId == request.auth.uid;
+          allow create: if isGroupAdmin(groupId);
           allow update, delete: if isGroupAdmin(groupId);
         }
 
         match /audit_logs/{logId} {
           allow read: if isGroupAdmin(groupId);
-          allow create: if isGroupMember(groupId);
+          allow create: if isGroupAdmin(groupId);
           allow update, delete: if false; // Append-only immutable log
         }
       }

@@ -15,14 +15,17 @@ import {
   getDoc, 
   collection,
   getDocs,
-  runTransaction
+  onSnapshot,
+  runTransaction,
+  updateDoc
 } from 'firebase/firestore';
 import { 
   GroupDocument, 
   MemberDocument, 
   InviteDocument, 
   UserDocument,
-  SharedFileDocument
+  SharedFileDocument,
+  GroupRole
 } from '../types/schema';
 
 export function getGroupPermissionError(error: unknown, operation: string): string {
@@ -234,6 +237,18 @@ export class GroupService {
     return memberSnap.exists() ? memberSnap.data() as MemberDocument : null;
   }
 
+  static watchGroupMembership(groupId: string, userId: string, onChange: (membership: MemberDocument | null) => void, onError?: (error: Error) => void): () => void {
+    return onSnapshot(doc(db, 'groups', groupId, 'members', userId), snapshot => {
+      onChange(snapshot.exists() ? snapshot.data() as MemberDocument : null);
+    }, error => onError?.(error));
+  }
+
+  static async updateMemberRole(groupId: string, memberId: string, role: Exclude<GroupRole, 'owner'>): Promise<void> {
+    const actor = await this.requireFirebaseUser();
+    if (actor.uid === memberId) throw new Error('No puedes cambiar tu propio rol.');
+    await updateDoc(doc(db, 'groups', groupId, 'members', memberId), { role });
+  }
+
   static async getUserDisplayName(userId: string): Promise<string> {
     const userSnap = await getDoc(doc(db, 'users', userId));
     if (!userSnap.exists()) return 'Propietario';
@@ -244,6 +259,56 @@ export class GroupService {
   static async getSharedFiles(groupId: string): Promise<SharedFileDocument[]> {
     const snapshot = await getDocs(collection(db, 'groups', groupId, 'shared_files'));
     return snapshot.docs.map(file => file.data() as SharedFileDocument);
+  }
+
+  static watchSharedFiles(groupId: string, onChange: (files: SharedFileDocument[]) => void, onError?: (error: Error) => void): () => void {
+    return onSnapshot(collection(db, 'groups', groupId, 'shared_files'), snapshot => {
+      onChange(snapshot.docs.map(file => file.data() as SharedFileDocument));
+    }, error => onError?.(error));
+  }
+
+  static watchGroupMembers(groupId: string, onChange: (members: Array<{ uid: string; displayName: string; role: string }>) => void, onError?: (error: Error) => void): () => void {
+    let latestSnapshot = 0;
+    return onSnapshot(collection(db, 'groups', groupId, 'members'), snapshot => {
+      const currentSnapshot = ++latestSnapshot;
+      void Promise.all(snapshot.docs.map(async memberDoc => {
+        const member = memberDoc.data() as MemberDocument;
+        return {
+          uid: member.userId,
+          displayName: await this.getUserDisplayName(member.userId),
+          role: member.role
+        };
+      })).then(members => {
+        if (currentSnapshot === latestSnapshot) onChange(members);
+      }).catch(error => onError?.(error instanceof Error ? error : new Error(String(error))));
+    }, error => onError?.(error));
+  }
+
+  static async requestGroupReload(groupId: string): Promise<void> {
+    const actor = await this.requireFirebaseUser();
+    await updateDoc(doc(db, 'groups', groupId), {
+      reloadSignalId: crypto.randomUUID(),
+      reloadRequestedAt: Date.now(),
+      reloadRequestedBy: actor.uid
+    });
+  }
+
+  static watchGroupReloadSignal(groupId: string, onReload: () => void, onError?: (error: Error) => void): () => void {
+    let initialized = false;
+    let previousSignalId: string | undefined;
+    return onSnapshot(doc(db, 'groups', groupId), snapshot => {
+      if (!snapshot.exists()) return;
+      const signalId = snapshot.data().reloadSignalId as string | undefined;
+      if (!initialized) {
+        initialized = true;
+        previousSignalId = signalId;
+        return;
+      }
+      if (signalId && signalId !== previousSignalId) {
+        previousSignalId = signalId;
+        onReload();
+      }
+    }, error => onError?.(error));
   }
 
   static async getGroupMembers(groupId: string): Promise<Array<{ uid: string; displayName: string; role: string }>> {

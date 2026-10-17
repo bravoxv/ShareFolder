@@ -12,6 +12,13 @@ interface ShareFilesModalProps {
   currentUser: { uid: string; displayName: string };
   currentRole: Role;
   serverFolder: string;
+  autoSyncEnabled: boolean;
+  autoSyncProgress: string;
+  autoSyncError: string;
+  isAutoSyncing: boolean;
+  serverIsOffline: boolean;
+  onAutoSyncChange: (enabled: boolean) => void;
+  onTransferBusyChange: (busy: boolean) => void;
   isOpen: boolean;
   onClose: () => void;
 }
@@ -27,10 +34,18 @@ export const ShareFilesModal: React.FC<ShareFilesModalProps> = ({
   currentUser,
   currentRole,
   serverFolder,
+  autoSyncEnabled,
+  autoSyncProgress,
+  autoSyncError,
+  isAutoSyncing,
+  serverIsOffline,
+  onAutoSyncChange,
+  onTransferBusyChange,
   isOpen,
   onClose
 }) => {
   const [files, setFiles] = useState<SharedFileDocument[]>([]);
+  const [filesLoaded, setFilesLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState('');
   const [error, setError] = useState('');
@@ -41,13 +56,22 @@ export const ShareFilesModal: React.FC<ShareFilesModalProps> = ({
     try {
       const shared = await GroupService.getSharedFiles(groupId);
       setFiles(shared);
+      setFilesLoaded(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No se pudieron cargar los archivos del grupo.');
     }
   };
 
   useEffect(() => {
-    if (isOpen) void refreshFiles();
+    if (!isOpen) return;
+    setError('');
+    setFilesLoaded(false);
+    return GroupService.watchSharedFiles(groupId, shared => {
+      setFiles(shared);
+      setFilesLoaded(true);
+    }, err => {
+      setError(err.message || 'No se pudieron cargar los archivos del grupo.');
+    });
   }, [isOpen, groupId]);
 
   if (!isOpen) return null;
@@ -58,6 +82,7 @@ export const ShareFilesModal: React.FC<ShareFilesModalProps> = ({
       return;
     }
     setBusy(true);
+    onTransferBusyChange(true);
     setError('');
     setNotice('');
     setProgress('Preparando archivos del servidor...');
@@ -71,8 +96,30 @@ export const ShareFilesModal: React.FC<ShareFilesModalProps> = ({
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setBusy(false);
+      onTransferBusyChange(false);
       setProgress('');
     }
+  };
+
+  const handleAutoSyncToggle = () => {
+    if (autoSyncEnabled) {
+      onAutoSyncChange(false);
+      setNotice('La sincronización automática quedó desactivada en esta PC.');
+      return;
+    }
+    if (!serverFolder) {
+      setError('Configura primero la carpeta local del servidor para activar la sincronización.');
+      return;
+    }
+    if (!serverIsOffline) {
+      setError('La sincronización automática solo funciona mientras el servidor está apagado.');
+      return;
+    }
+    const totalSize = files.reduce((sum, file) => sum + file.sizeBytes, 0);
+    if (!window.confirm(`Esta PC descargará automáticamente los archivos nuevos del grupo cuando el servidor esté apagado. Actualmente hay ${files.length} archivos (${formatSize(totalSize)}). Los archivos locales con la misma ruta se reemplazarán. ¿Activar sincronización en esta PC?`)) return;
+    onAutoSyncChange(true);
+    setError('');
+    setNotice('Sincronización automática activada para esta PC.');
   };
 
   const handleDownload = async () => {
@@ -87,6 +134,7 @@ export const ShareFilesModal: React.FC<ShareFilesModalProps> = ({
     if (!window.confirm(`Se descargarán ${files.length} archivos a la carpeta del servidor. Los archivos existentes con la misma ruta se reemplazarán. ¿Continuar?`)) return;
 
     setBusy(true);
+    onTransferBusyChange(true);
     setError('');
     setNotice('');
     try {
@@ -98,6 +146,7 @@ export const ShareFilesModal: React.FC<ShareFilesModalProps> = ({
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setBusy(false);
+      onTransferBusyChange(false);
       setProgress('');
     }
   };
@@ -135,17 +184,32 @@ export const ShareFilesModal: React.FC<ShareFilesModalProps> = ({
         </p>
 
         <div className="flex flex-wrap gap-2 mb-4">
-          <button disabled={busy || !serverFolder} onClick={handleUpload} className="flex-1 min-w-[190px] py-2.5 px-3 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 disabled:text-slate-500 rounded-xl text-xs font-bold flex items-center justify-center gap-2">
+          <button disabled={busy || isAutoSyncing || !serverFolder} onClick={handleUpload} className="flex-1 min-w-[190px] py-2.5 px-3 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 disabled:text-slate-500 rounded-xl text-xs font-bold flex items-center justify-center gap-2">
             <Upload className="w-4 h-4" /> Compartir carpeta del servidor
           </button>
-          <button disabled={busy || !serverFolder || !files.length} onClick={handleDownload} className="flex-1 min-w-[190px] py-2.5 px-3 bg-cyan-700 hover:bg-cyan-600 disabled:bg-slate-800 disabled:text-slate-500 rounded-xl text-xs font-bold flex items-center justify-center gap-2">
+          <button disabled={busy || isAutoSyncing || !serverFolder || !files.length} onClick={handleDownload} className="flex-1 min-w-[190px] py-2.5 px-3 bg-cyan-700 hover:bg-cyan-600 disabled:bg-slate-800 disabled:text-slate-500 rounded-xl text-xs font-bold flex items-center justify-center gap-2">
             <Download className="w-4 h-4" /> Descargar archivos del grupo
           </button>
           <button disabled={busy} onClick={refreshFiles} title="Actualizar lista" className="p-2.5 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 rounded-xl"><RefreshCw className="w-4 h-4" /></button>
         </div>
 
         {!serverFolder && <p className="text-[11px] text-amber-300 mb-3 flex items-center gap-1.5"><FolderOpen className="w-3.5 h-3.5" /> Selecciona una carpeta local del servidor antes de sincronizar.</p>}
+        <label className="mb-3 flex items-start gap-2 rounded-xl border border-slate-800 bg-slate-950 p-3 text-xs text-slate-300">
+          <input
+            type="checkbox"
+            checked={autoSyncEnabled}
+            disabled={isAutoSyncing || !filesLoaded || (autoSyncEnabled ? false : !serverFolder || !serverIsOffline)}
+            onChange={handleAutoSyncToggle}
+            className="mt-0.5 accent-cyan-500"
+          />
+          <span>
+            <span className="block font-semibold text-slate-200">{filesLoaded ? 'Sincronizar automáticamente en esta PC' : 'Cargando archivos del grupo...'}</span>
+            <span className="mt-1 block text-[10px] text-slate-500">Descarga los archivos del grupo y sus actualizaciones cuando el servidor está apagado. Reemplaza los archivos locales con la misma ruta.</span>
+          </span>
+        </label>
         {progress && <p className="text-xs text-cyan-300 mb-3">{progress}</p>}
+        {autoSyncProgress && <p className="text-xs text-cyan-300 mb-3">{autoSyncProgress}</p>}
+        {autoSyncError && <p role="alert" className="text-xs text-rose-300 mb-3 break-words">{autoSyncError}</p>}
         {notice && <p className="text-xs text-emerald-300 mb-3">{notice}</p>}
         {error && <p className="text-xs text-rose-300 mb-3 break-words">{error}</p>}
 

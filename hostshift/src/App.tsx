@@ -28,15 +28,20 @@ import {
   CheckCircle2
 } from 'lucide-react';
 import { Role } from './types/models';
-import { UserDocument, GroupDocument } from './types/schema';
+import { UserDocument, GroupDocument, SharedFileDocument } from './types/schema';
 import { AuthGoogleModal } from './components/AuthGoogleModal';
 import { ShareFilesModal } from './components/ShareFilesModal';
 import { WelcomeScreen } from './components/WelcomeScreen';
 import { GitUpdaterModal } from './components/GitUpdaterModal';
 import { getGroupPermissionError, GroupService } from './services/groupService';
+import { downloadSharedFiles } from './services/sharedFileService';
+
+const autoSyncKey = (groupId: string, userId: string) => `hostshift_auto_sync_${groupId}_${userId}`;
 
 export function App() {
   const [role, setRole] = useState<Role>('player');
+  const isOwnerOrAdmin = role === 'owner' || role === 'admin';
+  const canStartServer = role === 'owner' || role === 'admin' || role === 'host';
   const [currentUser, setCurrentUser] = useState<UserDocument | null>(() => {
     const saved = localStorage.getItem('hostshift_user');
     return saved ? JSON.parse(saved) : null;
@@ -102,6 +107,19 @@ export function App() {
   const [groupAccessReady, setGroupAccessReady] = useState(false);
   const [groupAccessError, setGroupAccessError] = useState('');
   const [groupMembers, setGroupMembers] = useState<Array<{ uid: string; displayName: string; role: string }>>([]);
+  const [roleUpdateError, setRoleUpdateError] = useState('');
+  const [updatingRoleUid, setUpdatingRoleUid] = useState<string | null>(null);
+  const [isSendingReloadSignal, setIsSendingReloadSignal] = useState(false);
+  const [pendingGroupReload, setPendingGroupReload] = useState(false);
+  const [groupReloadError, setGroupReloadError] = useState('');
+  const [isSharedTransferBusy, setIsSharedTransferBusy] = useState(false);
+  const sharedTransferBusyRef = useRef(false);
+  const [autoSyncEnabled, setAutoSyncEnabled] = useState(false);
+  const [isAutoSyncing, setIsAutoSyncing] = useState(false);
+  const [autoSyncProgress, setAutoSyncProgress] = useState('');
+  const [autoSyncError, setAutoSyncError] = useState('');
+  const autoSyncBusyRef = useRef(false);
+  const autoSyncKickRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     if (!activeGroup) {
@@ -166,6 +184,39 @@ export function App() {
     void validateMembership();
     return () => { cancelled = true; };
   }, [activeGroup?.id, currentUser?.uid]);
+
+  useEffect(() => {
+    if (!activeGroup || !currentUser || !groupAccessReady) return;
+    return GroupService.watchGroupMembership(activeGroup.id, currentUser.uid, membership => {
+      if (!membership) {
+        localStorage.removeItem('hostshift_active_group');
+        setActiveGroup(null);
+        setGroupAccessError('Tu membresía en este grupo fue revocada.');
+        return;
+      }
+      const latestRole = membership.role as Role;
+      setRole(latestRole);
+      GroupService.saveUserGroup(activeGroup, latestRole);
+    }, error => {
+      console.warn('No se pudo mantener actualizado tu rol:', error);
+    });
+  }, [activeGroup?.id, currentUser?.uid, groupAccessReady]);
+
+  useEffect(() => {
+    if (!activeGroup || !groupAccessReady) {
+      setGroupMembers([]);
+      return;
+    }
+    return GroupService.watchGroupMembers(activeGroup.id, setGroupMembers, error => {
+      console.warn('No se pudo mantener actualizada la lista de miembros:', error);
+    });
+  }, [activeGroup?.id, groupAccessReady]);
+
+  useEffect(() => {
+    if (!isOwnerOrAdmin && (activeMainTab === 'playit' || activeMainTab === 'roles')) {
+      setActiveMainTab('folder');
+    }
+  }, [isOwnerOrAdmin, activeMainTab]);
   const [inviteLink, setInviteLink] = useState('');
   const [copiedInvite, setCopiedInvite] = useState<boolean>(false);
 
@@ -176,6 +227,104 @@ export function App() {
   const [launcherFile, setLauncherFile] = useState<string>(() => {
     return localStorage.getItem('hostshift_launcher_file') || '';
   });
+
+  useEffect(() => {
+    if (!activeGroup || !currentUser) {
+      setAutoSyncEnabled(false);
+      return;
+    }
+    setAutoSyncEnabled(localStorage.getItem(autoSyncKey(activeGroup.id, currentUser.uid)) === 'true');
+    setAutoSyncProgress('');
+    setAutoSyncError('');
+  }, [activeGroup?.id, currentUser?.uid]);
+
+  useEffect(() => {
+    if (!activeGroup || !currentUser || !groupAccessReady || !autoSyncEnabled || !serverFolder || serverStatus !== 'offline') return;
+
+    let cancelled = false;
+    let latestFiles: SharedFileDocument[] = [];
+    const storageKey = autoSyncKey(activeGroup.id, currentUser.uid);
+    const readSyncedVersions = (): Record<string, number> => {
+      try { return JSON.parse(localStorage.getItem(storageKey) || '{}'); }
+      catch { return {}; }
+    };
+
+    const drainPendingFiles = async () => {
+      if (cancelled) return;
+      if (autoSyncBusyRef.current) {
+        autoSyncKickRef.current = () => { void drainPendingFiles(); };
+        return;
+      }
+
+      autoSyncBusyRef.current = true;
+      setIsAutoSyncing(true);
+      setAutoSyncError('');
+      try {
+        while (!cancelled) {
+          const syncedVersions = readSyncedVersions();
+          const file = latestFiles.find(item => syncedVersions[item.id] !== item.updatedAt);
+          if (!file) break;
+          setAutoSyncProgress(`Sincronizando ${file.relativePath}...`);
+          await downloadSharedFiles([file], serverFolder, (done, total) => {
+            setAutoSyncProgress(`Descargando ${file.relativePath}: bloque ${done} de ${total}`);
+          }, completedFile => {
+            syncedVersions[completedFile.id] = completedFile.updatedAt;
+            localStorage.setItem(storageKey, JSON.stringify(syncedVersions));
+          });
+        }
+        if (!cancelled) setAutoSyncProgress('');
+      } catch (error) {
+        if (!cancelled) {
+          setAutoSyncProgress('');
+          setAutoSyncError(error instanceof Error ? error.message : String(error));
+        }
+      } finally {
+        autoSyncBusyRef.current = false;
+        setIsAutoSyncing(false);
+        const kick = autoSyncKickRef.current;
+        autoSyncKickRef.current = null;
+        if (kick) setTimeout(kick, 0);
+      }
+    };
+
+    const unsubscribe = GroupService.watchSharedFiles(activeGroup.id, files => {
+      latestFiles = files;
+      void drainPendingFiles();
+    }, error => setAutoSyncError(error.message || 'No se pudieron revisar los archivos del grupo.'));
+
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, [activeGroup?.id, currentUser?.uid, groupAccessReady, autoSyncEnabled, serverFolder, serverStatus]);
+
+  useEffect(() => {
+    if (!activeGroup || !currentUser || !groupAccessReady) return;
+    return GroupService.watchGroupReloadSignal(activeGroup.id, () => {
+      if (autoSyncBusyRef.current || sharedTransferBusyRef.current) setPendingGroupReload(true);
+      else window.location.reload();
+    }, error => console.warn('No se pudo escuchar la señal de recarga del grupo:', error));
+  }, [activeGroup?.id, currentUser?.uid, groupAccessReady]);
+
+  useEffect(() => {
+    if (pendingGroupReload && !isAutoSyncing && !isSharedTransferBusy && !autoSyncBusyRef.current && !sharedTransferBusyRef.current) {
+      window.location.reload();
+    }
+  }, [pendingGroupReload, isAutoSyncing, isSharedTransferBusy]);
+
+  const handleSharedTransferBusyChange = (busy: boolean) => {
+    sharedTransferBusyRef.current = busy;
+    setIsSharedTransferBusy(busy);
+  };
+
+  const handleAutoSyncChange = (enabled: boolean) => {
+    if (!activeGroup || !currentUser) return;
+    localStorage.setItem(autoSyncKey(activeGroup.id, currentUser.uid), String(enabled));
+    setAutoSyncEnabled(enabled);
+    setAutoSyncError('');
+    if (!enabled) setAutoSyncProgress('');
+  };
+
   const [currentSubDir, setCurrentSubDir] = useState<string>('');
   const [selectedFile, setSelectedFile] = useState<{ name: string; path: string; size: number; content: string } | null>(null);
   const [fileContent, setFileContent] = useState<string>('');
@@ -320,6 +469,7 @@ export function App() {
   }, []);
 
   const handleStartPlayit = async () => {
+    if (!isOwnerOrAdmin) return;
     let targetExe = playitExePath.trim();
     if (!targetExe) {
       targetExe = 'C:\\Program Files\\playit_gg\\bin\\playit.exe';
@@ -356,6 +506,7 @@ export function App() {
   };
 
   const handleStopPlayit = async () => {
+    if (!isOwnerOrAdmin) return;
     setPlayitStatus('stopped');
     setPlayitTerminalLogs((prev) => [...prev, "[Playit] Túnel detenido."]);
     try {
@@ -366,6 +517,7 @@ export function App() {
   };
 
   const handleSendPlayitCommand = async () => {
+    if (!isOwnerOrAdmin) return;
     if (!playitTerminalInput.trim()) return;
     const cmd = playitTerminalInput.trim();
     setPlayitTerminalInput('');
@@ -379,6 +531,7 @@ export function App() {
   };
 
   const handleSendTerminalCommand = async () => {
+    if (!isOwnerOrAdmin) return;
     if (!terminalInput.trim()) return;
     const cmd = terminalInput.trim();
     setTerminalInput('');
@@ -392,6 +545,7 @@ export function App() {
   };
 
   const handleStartServer = async () => {
+    if (!canStartServer || isAutoSyncing) return;
     if (!launcherFile) {
       alert("Por favor selecciona primero qué archivo/programa iniciará el servidor (en la lista de archivos presiona 'Establecer como Iniciador').");
       return;
@@ -422,6 +576,7 @@ export function App() {
   };
 
   const handleStopServer = async () => {
+    if (!isOwnerOrAdmin) return;
     setServerStatus('saving');
     setLogs(prev => [
       ...prev,
@@ -442,6 +597,7 @@ export function App() {
 
   // Guardar archivo real en el disco de Windows
   const handleSaveFile = async () => {
+    if (!isOwnerOrAdmin) return;
     if (!selectedFile || !serverFolder) return;
     try {
       await invoke('save_file_content', {
@@ -457,7 +613,34 @@ export function App() {
     }
   };
 
-  const isOwnerOrAdmin = role === 'owner' || role === 'admin';
+  const handleUpdateMemberRole = async (memberId: string, nextRole: Exclude<Role, 'owner'>) => {
+    if (role !== 'owner' || !activeGroup || updatingRoleUid) return;
+    setUpdatingRoleUid(memberId);
+    setRoleUpdateError('');
+    try {
+      await GroupService.updateMemberRole(activeGroup.id, memberId, nextRole);
+      setGroupMembers(await GroupService.getGroupMembers(activeGroup.id));
+    } catch (error) {
+      setRoleUpdateError(error instanceof Error ? error.message : 'No se pudo actualizar el rol.');
+    } finally {
+      setUpdatingRoleUid(null);
+    }
+  };
+
+  const handleRequestGroupReload = async () => {
+    if (role !== 'owner' || !activeGroup || isSendingReloadSignal) return;
+    const confirmed = window.confirm('Se recargará HostShift en todos los miembros conectados a este grupo. Los cambios locales sin guardar podrían perderse. ¿Continuar?');
+    if (!confirmed) return;
+    setIsSendingReloadSignal(true);
+    setGroupReloadError('');
+    try {
+      await GroupService.requestGroupReload(activeGroup.id);
+    } catch (error) {
+      setGroupReloadError(error instanceof Error ? error.message : 'No se pudo avisar a los miembros para recargar.');
+    } finally {
+      setIsSendingReloadSignal(false);
+    }
+  };
 
   if (activeGroup && !groupAccessReady) {
     return <div className="h-screen w-screen bg-slate-950 text-slate-200 flex items-center justify-center text-sm">Verificando tu membresía y permisos del grupo...</div>;
@@ -599,16 +782,18 @@ export function App() {
           </div>
 
           {/* Compartir Servidor y Archivos (P2P Link) */}
-          <button
-            onClick={() => setIsShareOpen(true)}
-            className="w-full py-2.5 px-3 bg-cyan-600/20 hover:bg-cyan-600/30 text-cyan-300 border border-cyan-500/30 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2"
-          >
-            <Share2 className="w-4 h-4" />
-            Compartir Archivos y Servidor
-          </button>
+          {role !== 'host' && (
+            <button
+              onClick={() => setIsShareOpen(true)}
+              className="w-full py-2.5 px-3 bg-cyan-600/20 hover:bg-cyan-600/30 text-cyan-300 border border-cyan-500/30 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2"
+            >
+              <Share2 className="w-4 h-4" />
+              Compartir Archivos y Servidor
+            </button>
+          )}
 
           {/* Invitación Privada */}
-          <div className="bg-slate-950 p-4 rounded-xl border border-slate-800">
+          {isOwnerOrAdmin && <div className="bg-slate-950 p-4 rounded-xl border border-slate-800">
             <span className="text-xs text-slate-300 font-semibold block mb-1">Invitar Amigos al Grupo</span>
             <p className="text-[11px] text-slate-400 mb-3">Enlace privado con caducidad:</p>
             <div className="flex items-center gap-2">
@@ -627,7 +812,7 @@ export function App() {
               </button>
             </div>
             <span className="text-[10px] text-slate-500 block mt-2">Cada invitación vence en 48 h y permite hasta 5 miembros.</span>
-          </div>
+          </div>}
 
         </div>
 
@@ -691,17 +876,17 @@ export function App() {
             {serverStatus === 'offline' ? (
               <button
                 onClick={handleStartServer}
-                disabled={role === 'player'}
+                disabled={!canStartServer || isAutoSyncing}
                 className={`flex items-center gap-2 px-6 py-2.5 rounded-xl font-bold text-sm transition-all shadow-lg ${
-                  role === 'player'
+                  !canStartServer || isAutoSyncing
                     ? 'bg-slate-800 text-slate-600 cursor-not-allowed border border-slate-700'
                     : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-900/40 hover:scale-[1.02]'
                 }`}
               >
                 <Power className="w-4 h-4" />
-                Encender Servidor
+                {isAutoSyncing ? 'Sincronizando archivos...' : 'Encender Servidor'}
               </button>
-            ) : (
+            ) : isOwnerOrAdmin ? (
               <button
                 onClick={handleStopServer}
                 disabled={serverStatus === 'saving'}
@@ -710,6 +895,8 @@ export function App() {
                 <Power className="w-4 h-4" />
                 {serverStatus === 'saving' ? 'Guardando y Replicando...' : 'Apagar y Replicar'}
               </button>
+            ) : (
+              <span className="text-xs text-slate-400 px-3 py-2">Servidor encendido · solo admin/propietario puede apagarlo</span>
             )}
 
             {isOwnerOrAdmin && serverStatus === 'online' && (
@@ -731,8 +918,36 @@ export function App() {
               <GitBranch className="w-3.5 h-3.5 text-indigo-400" />
               Actualizaciones
             </button>
+            {role === 'owner' && (
+              <button
+                onClick={() => void handleRequestGroupReload()}
+                disabled={isSendingReloadSignal}
+                className="flex items-center gap-1.5 px-3.5 py-2.5 bg-cyan-600/20 hover:bg-cyan-600/30 disabled:opacity-50 text-cyan-300 border border-cyan-500/30 rounded-xl text-xs font-bold transition-all shadow-md"
+                title="Solicita a todos los miembros conectados que recarguen HostShift"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isSendingReloadSignal ? 'animate-spin' : ''}`} />
+                {isSendingReloadSignal ? 'Avisando...' : 'Recargar pantallas'}
+              </button>
+            )}
           </div>
         </header>
+
+        {groupReloadError && (
+          <div className="bg-rose-950/70 border-b border-rose-500/30 px-8 py-2 text-xs text-rose-200" role="alert">
+            No se pudo enviar la señal de recarga: {groupReloadError}
+          </div>
+        )}
+
+        {autoSyncProgress && (
+          <div className="bg-cyan-950/70 border-b border-cyan-500/30 px-8 py-2 text-xs text-cyan-200" role="status">
+            Sincronización automática: {autoSyncProgress}
+          </div>
+        )}
+        {autoSyncError && (
+          <div className="bg-rose-950/70 border-b border-rose-500/30 px-8 py-2 text-xs text-rose-200" role="alert">
+            Falló la sincronización automática: {autoSyncError}
+          </div>
+        )}
 
         {/* NAVEGACIÓN ENTRE SECCIONES CENTRALES: ROLES Y CANDIDATOS vs FOLDER (FILES) */}
         <div className="bg-slate-950 px-8 py-3 border-b border-slate-800/80 flex items-center justify-between flex-shrink-0">
@@ -763,6 +978,7 @@ export function App() {
 
             <button
               onClick={() => setActiveMainTab('roles')}
+              hidden={!isOwnerOrAdmin}
               className={`flex items-center gap-2 px-5 py-2 rounded-lg text-xs font-bold transition-all duration-300 ${
                 activeMainTab === 'roles'
                   ? 'bg-indigo-600 text-white shadow-md'
@@ -774,7 +990,7 @@ export function App() {
             </button>
 
             {/* PESTAÑA PLAYIT.GG: SE MUESTRA/OCULTA CON LA FLECHA AL LADO DE ROLES */}
-            {showPlayitPanel && (
+            {isOwnerOrAdmin && showPlayitPanel && (
               <button
                 onClick={() => setActiveMainTab('playit')}
                 className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-bold transition-all duration-300 animate-fadeIn ${
@@ -789,7 +1005,7 @@ export function App() {
             )}
 
             {/* BOTÓN CON FLECHA PARA MOSTRAR/OCULTAR LA PESTAÑA PLAYIT.GG */}
-            <button
+            {isOwnerOrAdmin && <button
               onClick={() => {
                 setShowPlayitPanel(prev => !prev);
                 if (showPlayitPanel && activeMainTab === 'playit') {
@@ -804,7 +1020,7 @@ export function App() {
               }`}
             >
               {showPlayitPanel ? <ChevronLeft className="w-4 h-4 text-cyan-400" /> : <ChevronRight className="w-4 h-4 text-slate-400" />}
-            </button>
+            </button>}
           </div>
 
           <div className="text-xs text-slate-400 flex items-center gap-2">
@@ -833,6 +1049,7 @@ export function App() {
                   <input
                     type="text"
                     value={serverFolder}
+                    disabled={!isOwnerOrAdmin}
                     placeholder="Ejemplo: C:\Servidores\MiJuego o D:\GameServers\Server1"
                     onChange={(e) => {
                       const val = e.target.value;
@@ -842,7 +1059,7 @@ export function App() {
                         GroupService.saveGroupServerConfig(activeGroup.id, { serverFolder: val });
                       }
                     }}
-                    className="w-full bg-slate-900 border border-slate-700 text-xs font-mono text-slate-200 px-3 py-2 rounded-lg outline-none focus:border-indigo-500 placeholder-slate-600"
+                    className="w-full bg-slate-900 border border-slate-700 text-xs font-mono text-slate-200 px-3 py-2 rounded-lg outline-none focus:border-indigo-500 placeholder-slate-600 disabled:cursor-not-allowed disabled:opacity-60"
                   />
                   <button
                     onClick={() => {
@@ -852,7 +1069,9 @@ export function App() {
                       }
                       loadRealDirectory(serverFolder, '', true);
                     }}
-                    className="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold px-4 py-2 rounded-lg transition-all flex items-center gap-1.5 flex-shrink-0 shadow-md shadow-indigo-900/30 hover:scale-[1.02]"
+                    disabled={!isOwnerOrAdmin}
+                    title={!isOwnerOrAdmin ? 'Solo admin/propietario puede cambiar la configuración del servidor.' : undefined}
+                    className="bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 disabled:text-slate-500 disabled:cursor-not-allowed text-white text-xs font-bold px-4 py-2 rounded-lg transition-all flex items-center gap-1.5 flex-shrink-0 shadow-md shadow-indigo-900/30 hover:scale-[1.02]"
                   >
                     <RefreshCw className="w-3.5 h-3.5" /> Guardar y Cargar
                   </button>
@@ -980,7 +1199,7 @@ export function App() {
                                 <span className="text-sm font-medium text-slate-200 group-hover:text-white">{item.name}</span>
                               </div>
                               <div className="flex items-center gap-2">
-                                {!item.is_dir && (
+                                {!item.is_dir && isOwnerOrAdmin && (
                                   <button
                                     onClick={(e) => {
                                       e.stopPropagation();
@@ -1061,13 +1280,13 @@ export function App() {
                     value={terminalInput}
                     onChange={(e) => setTerminalInput(e.target.value)}
                     onKeyDown={(e) => e.key === 'Enter' && handleSendTerminalCommand()}
-                    disabled={serverStatus !== 'online'}
-                    placeholder={serverStatus === 'online' ? "Escribe un comando para el servidor (ej: help, save, op, whitelist)..." : "El servidor debe estar ENCENDIDO para enviar comandos."}
+                    disabled={serverStatus !== 'online' || !isOwnerOrAdmin}
+                    placeholder={!isOwnerOrAdmin ? 'Solo admin/propietario puede usar la terminal.' : serverStatus === 'online' ? "Escribe un comando para el servidor (ej: help, save, op, whitelist)..." : "El servidor debe estar ENCENDIDO para enviar comandos."}
                     className="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-xs font-mono text-slate-200 outline-none focus:border-indigo-500 placeholder-slate-600 disabled:opacity-50"
                   />
                   <button
                     onClick={handleSendTerminalCommand}
-                    disabled={serverStatus !== 'online' || !terminalInput.trim()}
+                    disabled={serverStatus !== 'online' || !isOwnerOrAdmin || !terminalInput.trim()}
                     className="bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 disabled:text-slate-600 text-white px-5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shadow-lg"
                   >
                     <Send className="w-3.5 h-3.5" /> Enviar
@@ -1098,6 +1317,12 @@ export function App() {
                   <span className="text-xs bg-slate-800 text-slate-300 px-3 py-1 rounded-full font-mono">{groupMembers.length} miembros</span>
                 </div>
 
+                {roleUpdateError && (
+                  <p role="alert" className="mb-4 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">
+                    {roleUpdateError}
+                  </p>
+                )}
+
                 <div className="divide-y divide-slate-800/80 bg-slate-950 rounded-xl border border-slate-800 overflow-hidden">
                   {groupMembers.length ? groupMembers.map(member => (
                     <div key={member.uid} className="p-4 flex items-center justify-between gap-3">
@@ -1107,13 +1332,28 @@ export function App() {
                         </div>
                         <div className="text-xs text-slate-500 font-mono truncate">ID: {member.uid.slice(0, 16)}</div>
                       </div>
-                      <span className={`text-xs px-3 py-1 rounded-lg font-bold uppercase ${
-                        member.role === 'owner' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' :
-                        member.role === 'admin' ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30' :
-                        'bg-slate-800 text-slate-400 border border-slate-700'
-                      }`}>
-                        {member.role === 'owner' ? 'Propietario' : member.role === 'admin' ? 'Administrador' : member.role === 'host' ? 'Candidato a host' : 'Jugador'}
-                      </span>
+                      {role === 'owner' && member.role !== 'owner' ? (
+                        <select
+                          aria-label={`Cambiar rol de ${member.displayName}`}
+                          value={member.role}
+                          disabled={updatingRoleUid !== null}
+                          onChange={event => void handleUpdateMemberRole(member.uid, event.target.value as Exclude<Role, 'owner'>)}
+                          className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-xs font-bold text-slate-200 outline-none focus:border-indigo-500 disabled:opacity-50"
+                        >
+                          <option value="player">Jugador</option>
+                          <option value="host">Host</option>
+                          <option value="admin">Administrador</option>
+                        </select>
+                      ) : (
+                        <span className={`text-xs px-3 py-1 rounded-lg font-bold uppercase ${
+                          member.role === 'owner' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' :
+                          member.role === 'admin' ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30' :
+                          member.role === 'host' ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30' :
+                          'bg-slate-800 text-slate-400 border border-slate-700'
+                        }`}>
+                          {member.role === 'owner' ? 'Propietario' : member.role === 'admin' ? 'Administrador' : member.role === 'host' ? 'Host' : 'Jugador'}
+                        </span>
+                      )}
                     </div>
                   )) : <p className="p-5 text-xs text-slate-500 text-center">No se pudieron cargar miembros del grupo.</p>}
                 </div>
@@ -1242,6 +1482,13 @@ export function App() {
         currentUser={currentUser!}
         currentRole={role}
         serverFolder={serverFolder}
+        autoSyncEnabled={autoSyncEnabled}
+        autoSyncProgress={autoSyncProgress}
+        autoSyncError={autoSyncError}
+        isAutoSyncing={isAutoSyncing}
+        serverIsOffline={serverStatus === 'offline'}
+        onAutoSyncChange={handleAutoSyncChange}
+        onTransferBusyChange={handleSharedTransferBusyChange}
       />
 
       {/* Modal de Actualización Inteligente desde GitHub */}

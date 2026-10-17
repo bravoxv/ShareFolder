@@ -81,7 +81,7 @@ pub fn list_server_files(base_path: String) -> Result<Vec<DiskFileItem>, String>
 }
 
 #[tauri::command]
-pub fn read_server_file_chunk(base_path: String, relative_path: String, offset: u64, chunk_size: usize) -> Result<Vec<u8>, String> {
+pub fn read_server_file_chunk(base_path: String, relative_path: String, offset: u64, chunk_size: usize) -> Result<tauri::ipc::Response, String> {
     if chunk_size > MAX_SHARED_CHUNK_BYTES { return Err("El bloque supera el máximo de 8 MB.".into()); }
     let (_, path) = resolve_shared_file_path(&base_path, &relative_path, true)?;
     let size = fs::metadata(&path).map_err(|e| e.to_string())?.len();
@@ -91,7 +91,7 @@ pub fn read_server_file_chunk(base_path: String, relative_path: String, offset: 
     file.seek(SeekFrom::Start(offset)).map_err(|e| e.to_string())?;
     let mut bytes = vec![0; length];
     file.read_exact(&mut bytes).map_err(|e| format!("No se pudo leer el bloque: {}", e))?;
-    Ok(bytes)
+    Ok(tauri::ipc::Response::new(bytes))
 }
 
 #[tauri::command]
@@ -116,14 +116,46 @@ pub fn start_server_file_download(base_path: String, relative_path: String, file
 }
 
 #[tauri::command]
-pub fn write_server_file_chunk(base_path: String, file_id: String, offset: u64, content: Vec<u8>) -> Result<(), String> {
+fn required_ipc_header<'a>(request: &'a tauri::ipc::Request<'_>, name: &str) -> Result<&'a str, String> {
+    request.headers().get(name)
+        .ok_or_else(|| format!("Falta el encabezado IPC {}.", name))?
+        .to_str()
+        .map_err(|_| format!("El encabezado IPC {} no es válido.", name))
+}
+
+fn decode_ipc_header(value: &str) -> Result<String, String> {
+    let input = value.as_bytes();
+    let mut decoded = Vec::with_capacity(input.len());
+    let mut index = 0;
+    while index < input.len() {
+        if input[index] == b'%' {
+            if index + 2 >= input.len() { return Err("El encabezado IPC contiene una ruta codificada inválida.".into()); }
+            let hex = std::str::from_utf8(&input[index + 1..index + 3]).map_err(|e| e.to_string())?;
+            decoded.push(u8::from_str_radix(hex, 16).map_err(|e| e.to_string())?);
+            index += 3;
+        } else {
+            decoded.push(input[index]);
+            index += 1;
+        }
+    }
+    String::from_utf8(decoded).map_err(|e| format!("La ruta del encabezado IPC no es UTF-8: {}", e))
+}
+
+#[tauri::command]
+pub fn write_server_file_chunk(request: tauri::ipc::Request<'_>) -> Result<(), String> {
+    let tauri::ipc::InvokeBody::Raw(content) = request.body() else {
+        return Err("El bloque de descarga no llegó como datos binarios.".into());
+    };
     if content.len() > MAX_SHARED_CHUNK_BYTES { return Err("El bloque supera el máximo de 8 MB.".into()); }
+    let base_path = decode_ipc_header(required_ipc_header(&request, "x-base-path")?)?;
+    let file_id = required_ipc_header(&request, "x-file-id")?;
+    let offset = required_ipc_header(&request, "x-file-offset")?.parse::<u64>().map_err(|e| e.to_string())?;
     let temp = download_temp_path(&base_path, &file_id)?;
     let size = fs::metadata(&temp).map_err(|e| format!("No se inició la descarga: {}", e))?.len();
     if offset.saturating_add(content.len() as u64) > size { return Err("El bloque supera el tamaño declarado del archivo.".into()); }
     let mut file = OpenOptions::new().write(true).open(temp).map_err(|e| e.to_string())?;
     file.seek(SeekFrom::Start(offset)).map_err(|e| e.to_string())?;
-    file.write_all(&content).map_err(|e| e.to_string())
+    file.write_all(content).map_err(|e| e.to_string())
 }
 
 #[tauri::command]

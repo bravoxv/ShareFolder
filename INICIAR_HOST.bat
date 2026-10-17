@@ -12,16 +12,10 @@ if not exist "%APP_DIR%" (
 )
 cd /d "%APP_DIR%"
 
-REM ---- 1) Si ya hay version compilada, abrirla directamente ----
-if exist "%EXE_REL%" (
-    echo Abriendo HostShift...
-    start "" "%EXE_REL%"
-    exit /b 0
-)
-
+REM ---- Modo desarrollo / ejecucion segura ----
 echo ====================================================
-echo  No hay version compilada. Modo desarrollo.
-echo  La primera vez puede tardar varios minutos.
+echo  Iniciando HostShift...
+echo  Si es la primera vez puede tardar unos minutos.
 echo ====================================================
 echo.
 

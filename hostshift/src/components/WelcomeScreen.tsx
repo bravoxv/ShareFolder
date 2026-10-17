@@ -16,8 +16,7 @@ import {
   LogOut,
   Server,
   Trash2,
-  ChevronRight,
-  Play
+  ChevronRight
 } from 'lucide-react';
 import { UserDocument, GroupDocument } from '../types/schema';
 import { GroupService } from '../services/groupService';
@@ -43,7 +42,7 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
   const [copiedCode, setCopiedCode] = useState(false);
   const [myGroups, setMyGroups] = useState(() => GroupService.getUserGroups());
 
-  const isBrowser = !window.__TAURI_INTERNALS__;
+  const isBrowser = !(window as any).__TAURI_INTERNALS__;
 
   // Abrir navegador para autenticarse con Google sin restricciones de WebView
   const handleOpenBrowserLogin = async () => {

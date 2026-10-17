@@ -7,6 +7,8 @@ dist-ssr/
 # Tauri & Rust build artifacts
 src-tauri/target/
 target/
+dist_app/
+*.exe
 
 # Logs & temp
 *.log

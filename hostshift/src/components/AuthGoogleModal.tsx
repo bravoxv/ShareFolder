@@ -42,7 +42,7 @@ export const AuthGoogleModal: React.FC<AuthGoogleModalProps> = ({
   const [password, setPassword] = useState('');
   const [copiedCode, setCopiedCode] = useState(false);
 
-  const isBrowser = !window.__TAURI_INTERNALS__;
+  const isBrowser = !(window as any).__TAURI_INTERNALS__;
 
   useEffect(() => {
     // Sincronizar cambios de autenticación en este contexto

@@ -11,11 +11,7 @@ import {
   doc, 
   setDoc, 
   getDoc, 
-  runTransaction,
-  collection,
-  query,
-  where,
-  getDocs
+  runTransaction
 } from 'firebase/firestore';
 import { 
   GroupDocument, 

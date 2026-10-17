@@ -2,11 +2,7 @@
 title HostShift Launcher & Setup
 setlocal EnableDelayedExpansion
 
-:: Asegurar que la ventana permanezca abierta si ocurre cualquier salida o interrupción
-if not "%1"=="am_admin" (
-    powershell -NoProfile -Command "Start-Process cmd -ArgumentList '/k \"\"%~f0\" am_admin\"' -Verb Open" >nul 2>nul
-    exit /b 0
-)
+cd /d "%~dp0"
 
 echo ====================================================
 echo             HostShift - Comprobacion de Entorno
@@ -14,13 +10,13 @@ echo ====================================================
 echo.
 
 :: 1. Comprobar si ya existe el binario precompilado HostShift.exe
-if exist "%~dp0\dist_app\HostShift.exe" (
-    set "EXE_PATH=%~dp0\dist_app\HostShift.exe"
+if exist "%~dp0dist_app\HostShift.exe" (
+    set "EXE_PATH=%~dp0dist_app\HostShift.exe"
     goto :LaunchApp
 )
 
-if exist "%~dp0\hostshift\src-tauri\target\debug\hostshift.exe" (
-    set "EXE_PATH=%~dp0\hostshift\src-tauri\target\debug\hostshift.exe"
+if exist "%~dp0hostshift\src-tauri\target\debug\hostshift.exe" (
+    set "EXE_PATH=%~dp0hostshift\src-tauri\target\debug\hostshift.exe"
     goto :LaunchApp
 )
 
@@ -50,7 +46,7 @@ if %ERRORLEVEL% NEQ 0 (
     for /f "tokens=*" %%v in ('cargo -V 2^>nul') do echo [OK] Rust detectado (%%v)
 )
 
-:: Si falta alguna dependencia, preguntar si desea descargarla e instalarla
+:: Si falta alguna dependencia, preguntar si desea descargarla
 if "!MISSING_DEPS!"=="1" (
     echo.
     echo ====================================================
@@ -82,26 +78,26 @@ if "!MISSING_DEPS!"=="1" (
     exit /b 1
 )
 
-:: 3. Si tiene Node.js y Rust, compilar e instalar dependencias
+:: 3. Si tiene Node.js y Rust, compilar
 echo.
 echo [*] Todas las herramientas estan presentes. Preparando HostShift...
-cd /d "%~dp0\hostshift"
+cd /d "%~dp0hostshift"
 
 if not exist "node_modules" (
-    echo [*] Instalando modulos npm (esto solo ocurre una vez)...
+    echo [*] Instalando dependencias de HostShift...
     call npm install
 )
 
 echo [*] Compilando interfaz web...
 call npm run build
 
-echo [*] Compilando backend en Rust (creando HostShift.exe)...
+echo [*] Compilando backend nativo en Rust...
 call cargo build --manifest-path src-tauri/Cargo.toml
 
-if exist "%~dp0\hostshift\src-tauri\target\debug\hostshift.exe" (
-    if not exist "%~dp0\dist_app" mkdir "%~dp0\dist_app"
-    copy /y "%~dp0\hostshift\src-tauri\target\debug\hostshift.exe" "%~dp0\dist_app\HostShift.exe" >nul
-    set "EXE_PATH=%~dp0\dist_app\HostShift.exe"
+if exist "%~dp0hostshift\src-tauri\target\debug\hostshift.exe" (
+    if not exist "%~dp0dist_app" mkdir "%~dp0dist_app"
+    copy /y "%~dp0hostshift\src-tauri\target\debug\hostshift.exe" "%~dp0dist_app\HostShift.exe" >nul
+    set "EXE_PATH=%~dp0dist_app\HostShift.exe"
     goto :LaunchApp
 ) else (
     echo.
@@ -111,16 +107,29 @@ if exist "%~dp0\hostshift\src-tauri\target\debug\hostshift.exe" (
 )
 
 :LaunchApp
-:: Crear acceso directo en el Escritorio del usuario
-set "SHORTCUT_PATH=%USERPROFILE%\Desktop\HostShift.lnk"
-if not exist "%SHORTCUT_PATH%" (
-    echo [*] Creando acceso directo en tu Escritorio...
-    powershell -NoProfile -Command "$ws = New-Object -ComObject WScript.Shell; $s = $ws.CreateShortcut('%SHORTCUT_PATH%'); $s.TargetPath = '%EXE_PATH%'; $s.WorkingDirectory = '%~dp0'; $s.Description = 'HostShift Desktop'; $s.Save()" >nul 2>nul
+:: Intentar crear acceso directo en el Escritorio usando VBScript nativo (100% rapido y sin bloqueos de PowerShell)
+set "DESKTOP_DIR=%USERPROFILE%\Desktop"
+if exist "%DESKTOP_DIR%" (
+    if not exist "%DESKTOP_DIR%\HostShift.lnk" (
+        (
+            echo Set oWS = WScript.CreateObject^("WScript.Shell"^)
+            echo sLinkFile = "%DESKTOP_DIR%\HostShift.lnk"
+            echo Set oLink = oWS.CreateShortcut^(sLinkFile^)
+            echo oLink.TargetPath = "%EXE_PATH%"
+            echo oLink.WorkingDirectory = "%~dp0"
+            echo oLink.Description = "HostShift Desktop"
+            echo oLink.Save
+        ) > "%TEMP%\create_hs_shortcut.vbs"
+        cscript //nologo "%TEMP%\create_hs_shortcut.vbs" >nul 2>nul
+        del "%TEMP%\create_hs_shortcut.vbs" >nul 2>nul
+    )
 )
 
 echo.
 echo ====================================================
-echo        Iniciando HostShift Desktop con exito!
+echo        Iniciando HostShift Desktop...
 echo ====================================================
+echo.
 start "" "%EXE_PATH%"
+timeout /t 2 >nul
 exit /b 0

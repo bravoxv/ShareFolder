@@ -25,9 +25,10 @@ import {
   Share2
 } from 'lucide-react';
 import { Role } from './types/models';
-import { UserDocument } from './types/schema';
+import { UserDocument, GroupDocument } from './types/schema';
 import { AuthGoogleModal } from './components/AuthGoogleModal';
 import { ShareFilesModal } from './components/ShareFilesModal';
+import { WelcomeScreen } from './components/WelcomeScreen';
 
 export function App() {
   const [role, setRole] = useState<Role>('owner');
@@ -77,8 +78,20 @@ export function App() {
   }, [playitTerminalLogs]);
 
   // Datos del grupo
-  const [groupName, setGroupName] = useState<string>('Los Pibes Gaming');
-  const inviteCode = 'hs-invite-9482-xy';
+  const [activeGroup, setActiveGroup] = useState<GroupDocument | null>(() => {
+    const saved = localStorage.getItem('hostshift_active_group');
+    return saved ? JSON.parse(saved) : null;
+  });
+  const [groupName, setGroupName] = useState<string>(() => {
+    const saved = localStorage.getItem('hostshift_active_group');
+    if (saved) {
+      try {
+        return JSON.parse(saved).name;
+      } catch {}
+    }
+    return 'Los Pibes Gaming';
+  });
+  const inviteCode = activeGroup ? activeGroup.id.slice(0, 8) : 'hs-invite-9482-xy';
   const [copiedInvite, setCopiedInvite] = useState<boolean>(false);
 
   // Carpeta de servidor y archivo iniciador seleccionable
@@ -316,6 +329,31 @@ export function App() {
 
   const isOwnerOrAdmin = role === 'owner' || role === 'admin';
 
+  // Si aún no se ha creado o seleccionado un grupo privado, mostrar la pantalla inicial
+  if (!activeGroup) {
+    return (
+      <WelcomeScreen
+        currentUser={currentUser}
+        onUserChanged={(user) => {
+          setCurrentUser(user);
+          if (user) {
+            setLogs(prev => [...prev, `[Auth] Sesión activa con Google: ${user.displayName}`]);
+          }
+        }}
+        onGroupSelected={(group) => {
+          setActiveGroup(group);
+          setGroupName(group.name);
+          setRole('owner');
+          setLogs(prev => [
+            ...prev, 
+            `[Grupo] Grupo '${group.name}' activado con éxito.`,
+            `[Rol] Asignado como Propietario (Owner) legítimo en Firebase.`
+          ]);
+        }}
+      />
+    );
+  }
+
   return (
     <div className="flex h-screen w-screen bg-slate-950 text-slate-100 font-sans overflow-hidden">
       
@@ -356,7 +394,9 @@ export function App() {
               <span className="flex items-center gap-1.5 font-medium">
                 <Users className="w-3.5 h-3.5 text-indigo-400" /> Mi Grupo Privado
               </span>
-              <span className="text-[10px] bg-slate-800 text-slate-400 px-1.5 py-0.5 rounded font-mono">grp-01</span>
+              <span className="text-[10px] bg-slate-800 text-slate-400 px-1.5 py-0.5 rounded font-mono truncate max-w-[80px]">
+                {activeGroup ? activeGroup.id.slice(0, 8) : 'grp-01'}
+              </span>
             </div>
             <input
               type="text"
@@ -368,9 +408,18 @@ export function App() {
             <div className="mt-2 text-[11px] text-slate-500 flex items-center justify-between">
               <span>Propietario:</span>
               <span className="text-amber-300 font-semibold flex items-center gap-1">
-                <ShieldCheck className="w-3 h-3" /> {currentUser ? currentUser.displayName : 'Matias (Tú)'}
+                <ShieldCheck className="w-3 h-3" /> {currentUser ? currentUser.displayName : 'Propietario'}
               </span>
             </div>
+            <button
+              onClick={() => {
+                localStorage.removeItem('hostshift_active_group');
+                setActiveGroup(null);
+              }}
+              className="mt-2 w-full text-[10px] text-slate-500 hover:text-slate-300 transition-colors text-right"
+            >
+              + Cambiar o Crear otro Grupo
+            </button>
           </div>
 
           {/* Compartir Servidor y Archivos (P2P Link) */}
@@ -839,9 +888,11 @@ export function App() {
                   <div className="p-4 flex items-center justify-between">
                     <div>
                       <div className="text-sm font-bold text-slate-200 flex items-center gap-2">
-                        Matias <span className="text-xs text-indigo-400">(Tú)</span>
+                        {currentUser ? currentUser.displayName : 'Matias'} <span className="text-xs text-indigo-400">(Tú)</span>
                       </div>
-                      <div className="text-xs text-slate-500 font-mono">ID: usr-matias-01 &bull; Copia local: Al día (Época #{epoch})</div>
+                      <div className="text-xs text-slate-500 font-mono">
+                        ID: {currentUser ? currentUser.uid.slice(0, 16) : 'usr-matias-01'} &bull; Copia local: Al día (Época #{epoch})
+                      </div>
                     </div>
                     <span className="text-xs px-3 py-1 bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded-lg font-bold">
                       PROPIETARIO

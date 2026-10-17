@@ -148,6 +148,26 @@ export function App() {
       setPlayitTerminalLogs((prev) => [...prev, clean]);
     });
 
+    // Verificar si el servidor o playit ya estaban corriendo al abrir/reiniciar la app
+    (async () => {
+      try {
+        const isServerRunning = await invoke<boolean>('check_server_status');
+        if (isServerRunning) {
+          setServerStatus('online');
+          setCurrentHostName('Matias (Mi PC)');
+          setLogs(prev => [...prev, '[Sistema] Servidor detectado en ejecución. Reconectado a la sesión activa.']);
+        }
+
+        const isPlayitRunning = await invoke<boolean>('check_playit_status');
+        if (isPlayitRunning) {
+          setPlayitStatus('running');
+          setPlayitTerminalLogs(prev => [...prev, '[Sistema] Túnel Playit.gg detectado en ejecución.']);
+        }
+      } catch (err) {
+        console.warn('Error verificando estado de procesos activos:', err);
+      }
+    })();
+
     return () => {
       unlistenServer.then((unlisten) => unlisten());
       unlistenPlayit.then((unlisten) => unlisten());

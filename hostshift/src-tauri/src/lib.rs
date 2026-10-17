@@ -115,6 +115,26 @@ fn stop_game_server() -> Result<(), String> {
 }
 
 #[tauri::command]
+fn check_server_status() -> Result<bool, String> {
+    let mgr_lock = PROCESS_MANAGER.lock().unwrap();
+    if let Some(ref mgr) = *mgr_lock {
+        Ok(mgr.is_running())
+    } else {
+        Ok(false)
+    }
+}
+
+#[tauri::command]
+fn check_playit_status() -> Result<bool, String> {
+    let mgr_lock = PLAYIT_MANAGER.lock().unwrap();
+    if let Some(ref mgr) = *mgr_lock {
+        Ok(mgr.is_running())
+    } else {
+        Ok(false)
+    }
+}
+
+#[tauri::command]
 fn open_external_url(url: String) -> Result<(), String> {
     #[cfg(windows)]
     {
@@ -152,9 +172,11 @@ pub fn run() {
             start_game_server,
             stop_game_server,
             send_command_to_server,
+            check_server_status,
             start_playit_tunnel,
             stop_playit_tunnel,
             send_command_to_playit,
+            check_playit_status,
             open_external_url,
             sync_auth_session
         ])

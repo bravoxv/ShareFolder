@@ -122,6 +122,22 @@ impl ServerProcessManager {
         }
     }
 
+    /// Consulta si el proceso hijo sigue vivo
+    pub fn is_running(&self) -> bool {
+        let mut lock = self.child.lock().unwrap();
+        if let Some(ref mut child) = *lock {
+            match child.try_wait() {
+                Ok(None) => true, // Sigue corriendo
+                _ => {
+                    *lock = None;
+                    false
+                }
+            }
+        } else {
+            false
+        }
+    }
+
     /// Detiene el servidor limpiamente enviando el comando de apagado o terminándolo si no responde
     pub fn stop_server(&self, stop_command: Option<String>) -> Result<(), String> {
         if let Some(cmd) = stop_command {

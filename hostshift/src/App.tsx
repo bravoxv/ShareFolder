@@ -535,7 +535,6 @@ export function App() {
                 }`}>
                   {serverStatus}
                 </span>
-                <span className="text-xs text-slate-400 font-mono">Versión #{epoch}</span>
               </div>
               <div className="text-xs text-slate-400 flex items-center gap-2 mt-0.5">
                 <span>Iniciador:</span>

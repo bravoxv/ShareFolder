@@ -90,9 +90,14 @@ export const AuthGoogleModal: React.FC<AuthGoogleModalProps> = ({
     };
   }, [onUserChanged]);
 
-  const handleOpenBrowserLogin = () => {
-    // Abre el navegador real del usuario (Chrome, Edge, etc.) donde Google nunca bloquea el login
-    window.open('http://localhost:1420', '_blank');
+  const handleOpenBrowserLogin = async () => {
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      await invoke('open_external_url', { url: 'http://localhost:1420' });
+    } catch (e) {
+      console.error('Error abriendo navegador:', e);
+      window.open('http://localhost:1420', '_blank');
+    }
   };
 
   const handleGoogleSignIn = async () => {

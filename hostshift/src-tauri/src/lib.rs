@@ -235,8 +235,26 @@ fn open_external_url(url: String) -> Result<(), String> {
     #[cfg(windows)]
     {
         use std::process::Command;
+        let target = if url.starts_with("http://") || url.starts_with("https://") || url.starts_with("file://") {
+            url
+        } else {
+            // Si es un archivo local relativo, resolver su ruta absoluta
+            let mut resolved = std::env::current_dir().unwrap_or_default().join(&url);
+            if !resolved.exists() {
+                if let Ok(exe) = std::env::current_exe() {
+                    if let Some(parent) = exe.parent() {
+                        let candidate = parent.join(&url);
+                        if candidate.exists() {
+                            resolved = candidate;
+                        }
+                    }
+                }
+            }
+            resolved.to_string_lossy().to_string()
+        };
+
         Command::new("cmd")
-            .args(["/C", "start", "", &url])
+            .args(["/C", "start", "", &target])
             .spawn()
             .map_err(|e| format!("No se pudo abrir navegador: {}", e))?;
     }

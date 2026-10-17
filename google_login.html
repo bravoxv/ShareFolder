@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HostShift - Inicio de Sesión con Google</title>
+  <!-- Firebase App & Auth SDKs -->
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    body {
+      background-color: #020617;
+      color: #f8fafc;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 1.5rem;
+    }
+    .card {
+      background: rgba(15, 23, 42, 0.95);
+      border: 1px solid #1e293b;
+      border-radius: 1.5rem;
+      padding: 2rem;
+      width: 100%;
+      max-width: 440px;
+      text-align: center;
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+    }
+    .badge {
+      display: inline-block;
+      font-size: 0.75rem;
+      color: #818cf8;
+      background: rgba(99, 102, 241, 0.1);
+      border: 1px solid rgba(99, 102, 241, 0.2);
+      padding: 0.25rem 0.75rem;
+      border-radius: 9999px;
+      margin-bottom: 0.75rem;
+      font-weight: 600;
+    }
+    h1 {
+      font-size: 1.75rem;
+      font-weight: 900;
+      background: linear-gradient(to right, #818cf8, #22d3ee, #34d399);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      margin-bottom: 0.5rem;
+    }
+    p {
+      font-size: 0.85rem;
+      color: #94a3b8;
+      line-height: 1.4;
+      margin-bottom: 1.5rem;
+    }
+    .btn {
+      width: 100%;
+      padding: 0.85rem 1rem;
+      border-radius: 0.75rem;
+      font-weight: 700;
+      font-size: 0.875rem;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+      transition: all 0.2s ease;
+      border: none;
+    }
+    .btn-google {
+      background: #ffffff;
+      color: #0f172a;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    }
+    .btn-google:hover {
+      background: #f1f5f9;
+      transform: translateY(-1px);
+    }
+    .btn-copy {
+      background: #10b981;
+      color: #ffffff;
+      margin-top: 1rem;
+    }
+    .btn-copy:hover {
+      background: #059669;
+    }
+    .result-box {
+      display: none;
+      background: #090d16;
+      border: 1px solid #10b981;
+      border-radius: 0.75rem;
+      padding: 1.25rem;
+      margin-top: 1.5rem;
+      text-align: left;
+    }
+    .user-info {
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: #34d399;
+      margin-bottom: 0.5rem;
+    }
+    .code-display {
+      background: #020617;
+      border: 1px solid #1e293b;
+      padding: 0.5rem;
+      border-radius: 0.5rem;
+      font-family: monospace;
+      font-size: 0.75rem;
+      word-break: break-all;
+      color: #e2e8f0;
+      max-height: 80px;
+      overflow-y: auto;
+    }
+    .error-box {
+      display: none;
+      background: rgba(244, 63, 94, 0.15);
+      border: 1px solid rgba(244, 63, 94, 0.4);
+      color: #fda4af;
+      padding: 0.75rem;
+      border-radius: 0.75rem;
+      font-size: 0.8rem;
+      margin-bottom: 1rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="badge">Autenticación Segura</div>
+    <h1>HostShift Google Login</h1>
+    <p>Inicia sesión con tu cuenta oficial de Google en tu navegador. Al completar, se generará el código para sincronizarlo con tu aplicación de escritorio.</p>
+
+    <div id="error-box" class="error-box"></div>
+
+    <button id="google-btn" class="btn btn-google" onclick="iniciarSesionGoogle()">
+      <svg width="18" height="18" viewBox="0 0 24 24">
+        <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+        <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+        <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/>
+        <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/>
+      </svg>
+      Iniciar Sesión con Google
+    </button>
+
+    <div id="result-box" class="result-box">
+      <div id="user-display" class="user-info"></div>
+      <p style="margin-bottom: 0.5rem; font-size: 0.75rem;">Código generado para HostShift:</p>
+      <div id="session-code" class="code-display"></div>
+      <button id="copy-btn" class="btn btn-copy" onclick="copiarCodigo()">
+        Copiar Código al Portapapeles
+      </button>
+      <p style="margin-top: 0.75rem; font-size: 0.75rem; color: #64748b; text-align: center;">
+        Vuelve a la app de HostShift, haz clic en "Pegar código" y dale a Vincular Sesión.
+      </p>
+    </div>
+  </div>
+
+  <script>
+    const firebaseConfig = {
+      apiKey: "AIzaSyBGziAXy2AH0J6nFfu8lN744L7lRl3AC5k",
+      authDomain: "sharefolder-7dccf.firebaseapp.com",
+      projectId: "sharefolder-7dccf",
+      storageBucket: "sharefolder-7dccf.firebasestorage.app",
+      messagingSenderId: "596160954279",
+      appId: "1:596160954279:web:eb96018bb5d84709a60082"
+    };
+
+    firebase.initializeApp(firebaseConfig);
+    const auth = firebase.auth();
+    const googleProvider = new firebase.auth.GoogleAuthProvider();
+
+    let generatedToken = "";
+
+    async function iniciarSesionGoogle() {
+      const errBox = document.getElementById('error-box');
+      errBox.style.display = 'none';
+
+      try {
+        const result = await auth.signInWithPopup(googleProvider);
+        const user = result.user;
+
+        const userDoc = {
+          uid: user.uid,
+          displayName: user.displayName || user.email.split('@')[0] || 'Jugador',
+          email: user.email,
+          createdAt: Date.now()
+        };
+
+        // Guardar o sincronizar en Firestore
+        try {
+          const db = firebase.firestore();
+          await db.collection('users').doc(user.uid).set(userDoc, { merge: true });
+        } catch(e) {
+          console.warn('Firestore sync warning:', e);
+        }
+
+        generatedToken = btoa(JSON.stringify(userDoc));
+
+        document.getElementById('user-display').innerText = `Conectado como: ${userDoc.displayName} (${userDoc.email})`;
+        document.getElementById('session-code').innerText = generatedToken;
+        document.getElementById('result-box').style.display = 'block';
+        document.getElementById('google-btn').style.display = 'none';
+
+        // Intentar copiar automáticamente
+        navigator.clipboard.writeText(generatedToken);
+        document.getElementById('copy-btn').innerText = '¡Código Copiado Automáticamente!';
+      } catch (err) {
+        console.error(err);
+        errBox.innerText = err.message || 'Error al iniciar sesión';
+        errBox.style.display = 'block';
+      }
+    }
+
+    function copiarCodigo() {
+      if (generatedToken) {
+        navigator.clipboard.writeText(generatedToken);
+        const btn = document.getElementById('copy-btn');
+        btn.innerText = '¡Copiado con Éxito!';
+        setTimeout(() => { btn.innerText = 'Copiar Código al Portapapeles'; }, 2000);
+      }
+    }
+  </script>
+</body>
+</html>

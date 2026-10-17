@@ -322,16 +322,15 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
                     type="button"
                     onClick={async () => {
                       try {
-                        const fileUrl = window.location.href;
-                        await invoke('open_external_url', { url: fileUrl });
-                      } catch {
-                        window.open(window.location.href, '_blank');
+                        await invoke('open_external_url', { url: "google_login.html" });
+                      } catch (e) {
+                        console.error('Error abriendo navegador:', e);
                       }
                     }}
-                    className="w-full py-2 px-3 bg-cyan-600/15 hover:bg-cyan-600/25 border border-cyan-500/30 text-cyan-300 rounded-xl text-xs font-semibold flex items-center justify-center gap-2 transition-all"
+                    className="w-full py-2.5 px-3 bg-gradient-to-r from-emerald-600/20 to-cyan-600/20 hover:from-emerald-600/30 hover:to-cyan-600/30 border border-emerald-500/40 text-emerald-300 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-all shadow-md"
                   >
-                    <ExternalLink className="w-3.5 h-3.5" />
-                    Abrir en Chrome / Edge para Google
+                    <ExternalLink className="w-4 h-4 text-emerald-400" />
+                    Abrir en Navegador (Chrome/Edge/Brave) para Google
                   </button>
 
                   {!showCodeInput ? (

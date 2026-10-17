@@ -3,7 +3,6 @@ import {
   Users, 
   PlusCircle, 
   LogIn, 
-  KeyRound, 
   Sparkles, 
   ShieldCheck, 
   Loader2, 
@@ -16,9 +15,7 @@ import {
   Trash2,
   ChevronRight,
   GitBranch,
-  ExternalLink
 } from 'lucide-react';
-import { invoke } from '@tauri-apps/api/core';
 import { UserDocument, GroupDocument } from '../types/schema';
 import { GroupService } from '../services/groupService';
 
@@ -40,31 +37,7 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
   const [activeTab, setActiveTab] = useState<'create' | 'join'>('create');
   const [groupNameInput, setGroupNameInput] = useState('');
   const [joinInput, setJoinInput] = useState('');
-  const [showCodeInput, setShowCodeInput] = useState(false);
-  const [sessionCodeInput, setSessionCodeInput] = useState('');
   const [myGroups, setMyGroups] = useState(() => GroupService.getUserGroups());
-
-  // Aplicar el token de Google emitido por la página de login externa.
-  const handleApplySessionCode = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setErrorMsg(null);
-    setLoading(true);
-    try {
-      const parsed = JSON.parse(atob(sessionCodeInput.trim()));
-      if (typeof parsed?.googleAccessToken !== 'string') {
-        throw new Error('Este código es antiguo o no contiene credenciales de Google. Inicia sesión otra vez en el navegador.');
-      }
-      const user = await GroupService.loginWithGoogleAccessToken(parsed.googleAccessToken);
-      onUserChanged(user);
-      localStorage.setItem('hostshift_user', JSON.stringify(user));
-      setShowCodeInput(false);
-      setSessionCodeInput('');
-    } catch (error: any) {
-      setErrorMsg(error.message || 'Código no reconocido. Inicia sesión otra vez en el navegador y copia el código nuevo.');
-    } finally {
-      setLoading(false);
-    }
-  };
 
   // Crear grupo oficial en Firestore y asignar al usuario actual como Propietario (Owner)
   const handleCreateGroup = async (e: React.FormEvent) => {
@@ -310,59 +283,6 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
                   </form>
                 </div>
 
-                <div className="flex flex-col gap-2 pt-2">
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      try {
-                        await invoke('open_external_url', { url: "google_login.html" });
-                      } catch (e) {
-                        console.error('Error abriendo navegador:', e);
-                      }
-                    }}
-                    className="w-full py-2.5 px-3 bg-gradient-to-r from-emerald-600/20 to-cyan-600/20 hover:from-emerald-600/30 hover:to-cyan-600/30 border border-emerald-500/40 text-emerald-300 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-all shadow-md"
-                  >
-                    <ExternalLink className="w-4 h-4 text-emerald-400" />
-                    Abrir en Navegador (Chrome/Edge/Brave) para Google
-                  </button>
-
-                  {!showCodeInput ? (
-                    <button
-                      type="button"
-                      onClick={() => setShowCodeInput(true)}
-                      className="text-xs text-emerald-400 hover:text-emerald-300 font-medium py-1 flex items-center justify-center gap-1.5 mx-auto transition-colors"
-                    >
-                      <KeyRound className="w-3.5 h-3.5" />
-                      ¿Ya iniciaste en tu navegador? Pegar código
-                    </button>
-                  ) : (
-                  <form onSubmit={handleApplySessionCode} className="pt-2 space-y-2 text-left">
-                    <input
-                      type="text"
-                      required
-                      placeholder="Pega el código copiado aquí..."
-                      value={sessionCodeInput}
-                      onChange={(e) => setSessionCodeInput(e.target.value)}
-                      className="w-full bg-slate-900 border border-slate-700 text-xs font-mono text-slate-200 px-3 py-2 rounded-xl outline-none focus:border-emerald-500"
-                    />
-                    <div className="flex gap-2">
-                      <button
-                        type="submit"
-                        className="flex-1 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold transition-all"
-                      >
-                        Vincular Sesión
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setShowCodeInput(false)}
-                        className="px-3 py-1.5 bg-slate-800 text-slate-400 rounded-lg text-xs"
-                      >
-                        Cancelar
-                      </button>
-                    </div>
-                  </form>
-                )}
-                </div>
               </div>
             </div>
           </div>

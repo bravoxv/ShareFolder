@@ -230,75 +230,6 @@ fn get_playit_tunnel_address() -> Result<Option<String>, String> {
     Ok(None)
 }
 
-static AUTH_SERVER_STARTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
-fn ensure_auth_http_server() {
-    if AUTH_SERVER_STARTED.swap(true, std::sync::atomic::Ordering::SeqCst) {
-        return;
-    }
-
-    std::thread::spawn(|| {
-        use std::net::TcpListener;
-        use std::io::{Read, Write};
-
-        let listener = match TcpListener::bind("127.0.0.1:28475") {
-            Ok(l) => l,
-            Err(e) => {
-                eprintln!("No se pudo bindear servidor auth local: {}", e);
-                return;
-            }
-        };
-
-        let html_content = include_str!("../../../google_login.html");
-
-        for stream in listener.incoming() {
-            if let Ok(mut stream) = stream {
-                let mut buffer = [0u8; 1024];
-                let _ = stream.read(&mut buffer);
-
-                let response = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=UTF-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                    html_content.len(),
-                    html_content
-                );
-
-                let _ = stream.write_all(response.as_bytes());
-                let _ = stream.flush();
-            }
-        }
-    });
-}
-
-#[tauri::command]
-fn open_external_url(url: String) -> Result<(), String> {
-    ensure_auth_http_server();
-
-    #[cfg(windows)]
-    {
-        use std::process::Command;
-        let target = if url == "google_login.html" || url.ends_with("google_login.html") {
-            "http://127.0.0.1:28475".to_string()
-        } else if url.starts_with("http://") || url.starts_with("https://") {
-            url
-        } else {
-            url
-        };
-
-        Command::new("cmd")
-            .args(["/C", "start", "", &target])
-            .spawn()
-            .map_err(|e| format!("No se pudo abrir navegador: {}", e))?;
-    }
-    Ok(())
-}
-
-#[tauri::command]
-fn sync_auth_session(user_json: String, app_handle: tauri::AppHandle) -> Result<(), String> {
-    app_handle.emit("auth-session-synced", user_json)
-        .map_err(|e| format!("Error emitiendo evento de sesión: {}", e))?;
-    Ok(())
-}
-
 #[tauri::command]
 fn greet(name: &str) -> String {
     format!("HostShift Core listo: {}", name)
@@ -323,8 +254,6 @@ pub fn run() {
             send_command_to_playit,
             check_playit_status,
             get_playit_tunnel_address,
-            open_external_url,
-            sync_auth_session,
             check_git_updates,
             apply_git_updates
         ])

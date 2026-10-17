@@ -6,8 +6,7 @@ import {
   AlertCircle,
   Loader2,
   Mail,
-  UserPlus,
-  KeyRound
+  UserPlus
 } from 'lucide-react';
 import { UserDocument } from '../types/schema';
 import { auth, db, googleProvider } from '../services/firebase';
@@ -19,7 +18,6 @@ import {
   createUserWithEmailAndPassword 
 } from 'firebase/auth';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
-import { GroupService } from '../services/groupService';
 
 interface AuthGoogleModalProps {
   currentUser: UserDocument | null;
@@ -32,10 +30,7 @@ export const AuthGoogleModal: React.FC<AuthGoogleModalProps> = ({
 }) => {
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [showEmailFallback, setShowEmailFallback] = useState(false);
-  const [showCodeInput, setShowCodeInput] = useState(false);
-  const [sessionCodeInput, setSessionCodeInput] = useState('');
   const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -114,30 +109,6 @@ export const AuthGoogleModal: React.FC<AuthGoogleModalProps> = ({
       } else {
         setErrorMsg(error.message || 'Error al autenticarse con Google');
       }
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleApplySessionCode = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setErrorMsg(null);
-    setSuccessMsg(null);
-    setLoading(true);
-
-    try {
-      const parsed = JSON.parse(atob(sessionCodeInput.trim()));
-      if (typeof parsed?.googleAccessToken !== 'string') {
-        throw new Error('Este código es antiguo o no contiene credenciales de Google. Inicia sesión otra vez en el navegador.');
-      }
-      const user = await GroupService.loginWithGoogleAccessToken(parsed.googleAccessToken);
-      onUserChanged(user);
-      localStorage.setItem('hostshift_user', JSON.stringify(user));
-      setSuccessMsg('¡Sesión de Google vinculada con Firebase!');
-      setShowCodeInput(false);
-      setSessionCodeInput('');
-    } catch (error: any) {
-      setErrorMsg(error.message || 'Código no reconocido. Inicia sesión otra vez en el navegador y copia el código nuevo.');
     } finally {
       setLoading(false);
     }
@@ -243,49 +214,6 @@ export const AuthGoogleModal: React.FC<AuthGoogleModalProps> = ({
             {loading ? 'Conectando...' : 'Iniciar Sesión con Google'}
           </button>
 
-          {/* El código contiene un token de Google que Firebase valida al vincular la sesión. */}
-          {!showCodeInput && (
-            <button
-              onClick={() => setShowCodeInput(true)}
-              type="button"
-              className="w-full text-center text-[11px] text-emerald-400 hover:text-emerald-300 font-semibold transition-colors py-0.5 flex items-center justify-center gap-1"
-            >
-              <KeyRound className="w-3 h-3" />
-              ¿Iniciaste en el navegador? Pegar Código aquí
-            </button>
-          )}
-
-          {showCodeInput && (
-            <form onSubmit={handleApplySessionCode} className="p-2.5 bg-slate-950 border border-slate-800 rounded-xl space-y-2">
-              <span className="text-[10px] text-slate-400 block font-medium">
-                Pega el código nuevo copiado desde la página de inicio de sesión:
-              </span>
-              <input
-                type="text"
-                required
-                placeholder="Pega el código aquí..."
-                value={sessionCodeInput}
-                onChange={(e) => setSessionCodeInput(e.target.value)}
-                className="w-full bg-slate-900 border border-slate-700 text-xs font-mono text-slate-200 px-2.5 py-1.5 rounded-lg outline-none focus:border-emerald-500"
-              />
-              <div className="flex gap-1.5">
-                <button
-                  type="submit"
-                  className="flex-1 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold transition-all"
-                >
-                  Vincular Sesión
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setShowCodeInput(false)}
-                  className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-400 rounded-lg text-xs font-medium"
-                >
-                  Cancelar
-                </button>
-              </div>
-            </form>
-          )}
-
           {!showEmailFallback && (
             <button
               onClick={() => setShowEmailFallback(true)}
@@ -301,13 +229,6 @@ export const AuthGoogleModal: React.FC<AuthGoogleModalProps> = ({
         <div className="mt-2 p-2 bg-rose-500/20 border border-rose-500/30 rounded-lg text-rose-300 text-[11px] flex items-center gap-1.5">
           <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
           <span>{errorMsg}</span>
-        </div>
-      )}
-
-      {successMsg && (
-        <div className="mt-2 p-2 bg-emerald-500/20 border border-emerald-500/30 rounded-lg text-emerald-300 text-[11px] flex items-center gap-1.5">
-          <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" />
-          <span>{successMsg}</span>
         </div>
       )}
 

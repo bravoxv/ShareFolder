@@ -387,43 +387,53 @@ export function App() {
   // Si aún no se ha creado o seleccionado un grupo privado, mostrar la pantalla inicial
   if (!activeGroup) {
     return (
-      <WelcomeScreen
-        currentUser={currentUser}
-        onUserChanged={(user) => {
-          setCurrentUser(user);
-          if (user) {
-            setLogs(prev => [...prev, `[Auth] Sesión activa con Google: ${user.displayName}`]);
-          }
-        }}
-        onGroupSelected={(group, assignedRole) => {
-          setActiveGroup(group);
-          setGroupName(group.name);
-          const userRole = (assignedRole as Role) || 'owner';
-          setRole(userRole);
+      <>
+        <WelcomeScreen
+          currentUser={currentUser}
+          onUserChanged={(user) => {
+            setCurrentUser(user);
+            if (user) {
+              setLogs(prev => [...prev, `[Auth] Sesión activa con Google: ${user.displayName}`]);
+            }
+          }}
+          onGroupSelected={(group, assignedRole) => {
+            setActiveGroup(group);
+            setGroupName(group.name);
+            const userRole = (assignedRole as Role) || 'owner';
+            setRole(userRole);
 
-          // Cargar configuración de servidor asociada a este grupo específico
-          const groupCfg = GroupService.getGroupServerConfig(group.id);
-          if (groupCfg.serverFolder) {
-            setServerFolder(groupCfg.serverFolder);
-            localStorage.setItem('hostshift_server_folder', groupCfg.serverFolder);
-            loadRealDirectory(groupCfg.serverFolder, '');
-          }
-          if (groupCfg.launcherFile) {
-            setLauncherFile(groupCfg.launcherFile);
-            localStorage.setItem('hostshift_launcher_file', groupCfg.launcherFile);
-          }
-          if (groupCfg.tunnelAddress) {
-            setTunnelAddress(groupCfg.tunnelAddress);
-            localStorage.setItem('hostshift_tunnel_address', groupCfg.tunnelAddress);
-          }
+            // Cargar configuración de servidor asociada a este grupo específico
+            const groupCfg = GroupService.getGroupServerConfig(group.id);
+            if (groupCfg.serverFolder) {
+              setServerFolder(groupCfg.serverFolder);
+              localStorage.setItem('hostshift_server_folder', groupCfg.serverFolder);
+              loadRealDirectory(groupCfg.serverFolder, '');
+            }
+            if (groupCfg.launcherFile) {
+              setLauncherFile(groupCfg.launcherFile);
+              localStorage.setItem('hostshift_launcher_file', groupCfg.launcherFile);
+            }
+            if (groupCfg.tunnelAddress) {
+              setTunnelAddress(groupCfg.tunnelAddress);
+              localStorage.setItem('hostshift_tunnel_address', groupCfg.tunnelAddress);
+            }
 
-          setLogs(prev => [
-            ...prev, 
-            `[Grupo] Servidor/Grupo '${group.name}' activado con éxito.`,
-            `[Rol] Asignado como ${userRole.toUpperCase()} en este servidor.`
-          ]);
-        }}
-      />
+            setLogs(prev => [
+              ...prev, 
+              `[Grupo] Servidor/Grupo '${group.name}' activado con éxito.`,
+              `[Rol] Asignado como ${userRole.toUpperCase()} en este servidor.`
+            ]);
+          }}
+          onOpenUpdater={() => setIsUpdaterOpen(true)}
+        />
+        <GitUpdaterModal
+          isOpen={isUpdaterOpen}
+          onClose={() => setIsUpdaterOpen(false)}
+          onUpdateApplied={() => {
+            setLogs(prev => [...prev, '[Actualización] Archivos sincronizados con GitHub.']);
+          }}
+        />
+      </>
     );
   }
 

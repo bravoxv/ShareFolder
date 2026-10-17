@@ -3,7 +3,6 @@ import {
   Users, 
   PlusCircle, 
   LogIn, 
-  ExternalLink, 
   KeyRound, 
   Sparkles, 
   ShieldCheck, 
@@ -16,7 +15,8 @@ import {
   LogOut,
   Server,
   Trash2,
-  ChevronRight
+  ChevronRight,
+  GitBranch
 } from 'lucide-react';
 import { UserDocument, GroupDocument } from '../types/schema';
 import { GroupService } from '../services/groupService';
@@ -25,12 +25,14 @@ interface WelcomeScreenProps {
   currentUser: UserDocument | null;
   onUserChanged: (user: UserDocument | null) => void;
   onGroupSelected: (group: GroupDocument, role?: string) => void;
+  onOpenUpdater?: () => void;
 }
 
 export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
   currentUser,
   onUserChanged,
-  onGroupSelected
+  onGroupSelected,
+  onOpenUpdater
 }) => {
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -43,16 +45,6 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
   const [myGroups, setMyGroups] = useState(() => GroupService.getUserGroups());
 
   const isBrowser = !(window as any).__TAURI_INTERNALS__;
-
-  // Abrir navegador para autenticarse con Google sin restricciones de WebView
-  const handleOpenBrowserLogin = async () => {
-    try {
-      const { invoke } = await import('@tauri-apps/api/core');
-      await invoke('open_external_url', { url: 'http://localhost:1420' });
-    } catch {
-      window.open('http://localhost:1420', '_blank');
-    }
-  };
 
   // Copiar código de sesión desde el navegador hacia la app
   const handleCopyBrowserSession = () => {
@@ -180,9 +172,9 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
 
       <div className={`w-full ${currentUser ? 'max-w-4xl' : 'max-w-md'} bg-slate-900/90 border border-slate-800 rounded-3xl p-8 shadow-2xl backdrop-blur relative z-10 animate-fadeIn transition-all duration-300`}>
         
-        {/* Cabecera / Marca */}
-        <div className="text-center mb-6">
-          <div className="inline-flex items-center gap-2 mb-2">
+        {/* Cabecera / Marca y Botón de Actualizar */}
+        <div className="flex items-center justify-between mb-6 pb-4 border-b border-slate-800/80">
+          <div className="inline-flex items-center gap-2">
             <span className="text-3xl font-black bg-gradient-to-r from-indigo-400 via-cyan-400 to-emerald-400 bg-clip-text text-transparent">
               HostShift
             </span>
@@ -190,10 +182,21 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
               v0.1.0
             </span>
           </div>
-          <p className="text-xs text-slate-400">
-            Comparte y aloja servidores dedicados de juegos entre amigos sin host 24/7.
-          </p>
+
+          {onOpenUpdater && (
+            <button
+              onClick={onOpenUpdater}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 rounded-xl text-xs font-bold transition-all shadow-md"
+              title="Comprobar y actualizar solo los archivos modificados desde GitHub"
+            >
+              <GitBranch className="w-3.5 h-3.5 text-indigo-400" />
+              Actualizaciones GitHub
+            </button>
+          )}
         </div>
+        <p className="text-xs text-slate-400 text-center -mt-3 mb-6">
+          Comparte y aloja servidores dedicados de juegos entre amigos sin host 24/7.
+        </p>
 
         {/* Mensaje de Error si surge */}
         {errorMsg && (
@@ -217,16 +220,21 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
                 </p>
               </div>
 
-              {isBrowser ? (
-                /* En el navegador web oficial */
+              <div className="space-y-2 pt-1">
                 <button
                   onClick={async () => {
                     setLoading(true);
+                    setErrorMsg(null);
                     try {
                       const user = await GroupService.loginWithGoogle();
                       onUserChanged(user);
                     } catch (err: any) {
-                      setErrorMsg(err.message || 'Error con Google Sign-In');
+                      console.error('Google Sign-In Error:', err);
+                      if (err.code === 'auth/popup-closed-by-user') {
+                        setErrorMsg('Ventana de Google cerrada antes de completar el inicio de sesión.');
+                      } else {
+                        setErrorMsg(err.message || 'Error al iniciar sesión con Google.');
+                      }
                     } finally {
                       setLoading(false);
                     }
@@ -235,18 +243,8 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
                   className="w-full py-3 px-4 bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-500 hover:to-indigo-600 text-white rounded-xl text-xs font-bold shadow-lg shadow-indigo-900/30 flex items-center justify-center gap-2 transition-all hover:scale-[1.02]"
                 >
                   {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <LogIn className="w-4 h-4" />}
-                  {loading ? 'Conectando...' : 'Iniciar Sesión con Google'}
+                  {loading ? 'Conectando con Google...' : 'Iniciar Sesión con Google'}
                 </button>
-              ) : (
-                /* En la aplicación de escritorio */
-                <div className="space-y-2 pt-1">
-                  <button
-                    onClick={handleOpenBrowserLogin}
-                    className="w-full py-3 px-4 bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-500 hover:to-indigo-600 text-white rounded-xl text-xs font-bold shadow-lg shadow-indigo-900/30 flex items-center justify-center gap-2 transition-all hover:scale-[1.02]"
-                  >
-                    <ExternalLink className="w-4 h-4" />
-                    Iniciar Sesión con Google (Navegador)
-                  </button>
 
                   {!showCodeInput ? (
                     <button
@@ -284,7 +282,6 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
                     </form>
                   )}
                 </div>
-              )}
             </div>
           </div>
         ) : (

@@ -7,7 +7,6 @@ import {
   Loader2,
   Mail,
   UserPlus,
-  ExternalLink,
   Copy,
   KeyRound
 } from 'lucide-react';
@@ -83,15 +82,6 @@ export const AuthGoogleModal: React.FC<AuthGoogleModalProps> = ({
 
     return () => unsubscribe();
   }, [onUserChanged]);
-
-  const handleOpenBrowserLogin = async () => {
-    try {
-      const { invoke } = await import('@tauri-apps/api/core');
-      await invoke('open_external_url', { url: 'http://localhost:1420' });
-    } catch (e) {
-      window.open('http://localhost:1420', '_blank');
-    }
-  };
 
   const handleGoogleSignIn = async () => {
     setErrorMsg(null);
@@ -269,16 +259,6 @@ export const AuthGoogleModal: React.FC<AuthGoogleModalProps> = ({
               <LogIn className="w-4 h-4" />
             )}
             {loading ? 'Conectando...' : 'Iniciar Sesión con Google'}
-          </button>
-
-          {/* Abrir en Navegador Real */}
-          <button
-            onClick={handleOpenBrowserLogin}
-            type="button"
-            className="w-full py-1.5 px-2 bg-slate-900 hover:bg-slate-800 text-indigo-400 border border-slate-800 rounded-lg text-[11px] font-medium flex items-center justify-center gap-1.5 transition-colors"
-          >
-            <ExternalLink className="w-3.5 h-3.5" />
-            Abrir en Navegador (Chrome / Edge)
           </button>
 
           {/* Botón para pegar el código de sesión generado en el navegador */}

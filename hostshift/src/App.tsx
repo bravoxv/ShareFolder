@@ -535,7 +535,7 @@ export function App() {
                 }`}>
                   {serverStatus}
                 </span>
-                <span className="text-xs text-slate-400 font-mono">Época #{epoch}</span>
+                <span className="text-xs text-slate-400 font-mono">Versión #{epoch}</span>
               </div>
               <div className="text-xs text-slate-400 flex items-center gap-2 mt-0.5">
                 <span>Iniciador:</span>
@@ -973,7 +973,7 @@ export function App() {
                         {currentUser ? currentUser.displayName : 'Matias'} <span className="text-xs text-indigo-400">(Tú)</span>
                       </div>
                       <div className="text-xs text-slate-500 font-mono">
-                        ID: {currentUser ? currentUser.uid.slice(0, 16) : 'usr-matias-01'} &bull; Copia local: Al día (Época #{epoch})
+                        ID: {currentUser ? currentUser.uid.slice(0, 16) : 'usr-matias-01'} &bull; Copia local: Al día (v{epoch})
                       </div>
                     </div>
                     <span className="text-xs px-3 py-1 bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded-lg font-bold">

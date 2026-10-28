@@ -46,11 +46,19 @@ export function App() {
   const [isShareOpen, setIsShareOpen] = useState(false);
   const [isUpdaterOpen, setIsUpdaterOpen] = useState(false);
   const [serverStatus, setServerStatus] = useState<'offline' | 'starting' | 'online' | 'saving'>('offline');
-  const [epoch, setEpoch] = useState<number>(1);
+  const [, setEpoch] = useState<number>(1);
   const [tunnelAddress, setTunnelAddress] = useState<string>(() => {
     return localStorage.getItem('hostshift_tunnel_address') || 'Detectando túnel...';
   });
   const [currentHostName, setCurrentHostName] = useState<string | null>(null);
+  const [currentHostUid, setCurrentHostUid] = useState<string | null>(null);
+  const [isLocalHost, setIsLocalHost] = useState<boolean>(false);
+  const isLocalHostRef = useRef<boolean>(false);
+  const canStopServer = isOwnerOrAdmin || isLocalHost || (currentHostUid ? currentHostUid === currentUser?.uid : false);
+  const localDeviceIdRef = useRef<string>('');
+  const [ownerLauncherFile, setOwnerLauncherFile] = useState<string>('');
+  const processedCommandsRef = useRef<Set<string>>(new Set());
+  const logsThrottleTimerRef = useRef<any>(null);
 
   // Navegación animada entre pestañas centrales en la MISMA ventana: 'folder' vs 'console' vs 'roles' vs 'playit'
   const [activeMainTab, setActiveMainTab] = useState<'folder' | 'console' | 'roles' | 'playit'>('folder');
@@ -253,12 +261,19 @@ export function App() {
     }, error => console.warn('No se pudo escuchar la señal de recarga del grupo:', error));
   }, [activeGroup?.id, currentUser?.uid, groupAccessReady]);
 
-  // Observar en Firestore la ruta del servidor publicada por el propietario
+  // Observar en Firestore la ruta del servidor y el iniciador publicados por el propietario
   useEffect(() => {
     if (!activeGroup || !groupAccessReady) return;
     return GroupService.watchGroupServerConfig(activeGroup.id, cfg => {
       if (cfg.serverFolder) {
         setOwnerServerFolder(cfg.serverFolder);
+      }
+      if (cfg.launcherFile) {
+        setOwnerLauncherFile(cfg.launcherFile);
+        setLauncherFile(prev => prev || cfg.launcherFile || '');
+      }
+      if (cfg.tunnelAddress) {
+        setTunnelAddress(cfg.tunnelAddress);
       }
     }, error => console.warn('No se pudo observar la config del servidor:', error));
   }, [activeGroup?.id, groupAccessReady]);
@@ -314,7 +329,11 @@ export function App() {
           canPublish: isBroadcastingFiles
         });
         if (cancelled) return;
-        await GroupService.publishSyncDevice(activeGroup.id, local.deviceId, currentUser.displayName);
+        localDeviceIdRef.current = local.deviceId;
+        await GroupService.publishSyncDevice(activeGroup.id, local.deviceId, currentUser.displayName, {
+          isHosting: isLocalHostRef.current,
+          serverStatus: isLocalHostRef.current ? 'online' : 'offline'
+        });
         if (cancelled) return;
         stopWatching = GroupService.watchSyncDevices(activeGroup.id, devices => {
           void invoke('syncthing_connect_group', {
@@ -324,6 +343,43 @@ export function App() {
             canPublish: isBroadcastingFiles
           }).then(() => { if (!cancelled) setSyncConnectionError(''); })
             .catch(error => { if (!cancelled) setSyncConnectionError(error instanceof Error ? error.message : String(error)); });
+
+          // 1. Detectar si alguna máquina en el grupo está corriendo como host activo
+          const activeHostDevice = devices.find(
+            d => d.isHosting && (d.serverStatus === 'online' || d.serverStatus === 'starting')
+          );
+
+          if (activeHostDevice) {
+            const isSelf = activeHostDevice.deviceId === localDeviceIdRef.current;
+            if (!isSelf && !isLocalHostRef.current) {
+              setServerStatus(activeHostDevice.serverStatus || 'online');
+              setCurrentHostName(`${activeHostDevice.displayName}`);
+              setCurrentHostUid(activeHostDevice.userId);
+              if (activeHostDevice.consoleLogs && activeHostDevice.consoleLogs.length > 0) {
+                setServerTerminalLogs(activeHostDevice.consoleLogs);
+              }
+            }
+          } else {
+            // Nadie en el grupo está corriendo como host
+            if (!isLocalHostRef.current) {
+              setServerStatus('offline');
+              setCurrentHostName(null);
+              setCurrentHostUid(null);
+            }
+          }
+
+          // 2. Si nosotros somos la PC que corre el servidor, procesar comandos remotos de jugadores u otros hosts
+          if (isLocalHostRef.current) {
+            for (const dev of devices) {
+              if (dev.pendingCommand && dev.pendingCommand.id && !processedCommandsRef.current.has(dev.pendingCommand.id)) {
+                processedCommandsRef.current.add(dev.pendingCommand.id);
+                const cmd = dev.pendingCommand.text;
+                const sender = dev.pendingCommand.senderName || 'Miembro';
+                setServerTerminalLogs(prev => [...prev, `> [${sender}] ${cmd}`]);
+                void invoke('send_command_to_server', { command: cmd });
+              }
+            }
+          }
         }, error => { if (!cancelled) setSyncConnectionError(error.message); });
       } catch (error) {
         if (!cancelled) setSyncConnectionError(error instanceof Error ? error.message : String(error));
@@ -332,6 +388,7 @@ export function App() {
     void connect();
     return () => { cancelled = true; stopWatching?.(); };
   }, [activeGroup?.id, currentUser?.uid, currentUser?.displayName, groupAccessReady, serverFolder, localSyncFolder, role, isBroadcastingFiles]);
+
 
 
   useEffect(() => {
@@ -425,19 +482,12 @@ export function App() {
   };
 
   useEffect(() => {
-    if (serverFolder) {
-      loadRealDirectory(serverFolder, '');
+    const activeDir = (role === 'owner' ? serverFolder : localSyncFolder) || serverFolder;
+    if (activeDir) {
+      loadRealDirectory(activeDir, '');
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [serverFolder]);
-
-  // Para miembros no-owner: cargar automáticamente los archivos del servidor del propietario
-  useEffect(() => {
-    if (!isOwnerOrAdmin && ownerServerFolder) {
-      loadRealDirectory(ownerServerFolder, '');
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ownerServerFolder, isOwnerOrAdmin]);
+  }, [serverFolder, localSyncFolder, role]);
 
   // Listeners de eventos Tauri y verificación inicial de procesos
   useEffect(() => {
@@ -447,7 +497,25 @@ export function App() {
         .replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '')
         .replace(/\[m$/g, '')
         .replace(/\[\d+m/g, '');
-      setServerTerminalLogs((prev) => [...prev, clean]);
+      setServerTerminalLogs((prev) => {
+        const updated = [...prev, clean].slice(-80);
+        // Si somos la PC que corre el servidor, transmitir logs en vivo al grupo
+        if (isLocalHostRef.current && localDeviceIdRef.current && activeGroup) {
+          if (!logsThrottleTimerRef.current) {
+            logsThrottleTimerRef.current = setTimeout(() => {
+              logsThrottleTimerRef.current = null;
+              if (activeGroup && localDeviceIdRef.current) {
+                void GroupService.updateSyncDeviceState(activeGroup.id, localDeviceIdRef.current, {
+                  consoleLogs: updated,
+                  isHosting: true,
+                  serverStatus: 'online'
+                });
+              }
+            }, 800);
+          }
+        }
+        return updated;
+      });
     });
 
     // Escuchar la consola del túnel playit.gg en vivo
@@ -464,10 +532,14 @@ export function App() {
       try {
         const isServerRunning = await invoke<boolean>('check_server_status');
         if (isServerRunning) {
+          isLocalHostRef.current = true;
+          setIsLocalHost(true);
           setServerStatus('online');
-          setCurrentHostName('Matias (Mi PC)');
+          setCurrentHostName(`${currentUser?.displayName || 'Host'} (Esta PC)`);
+          setCurrentHostUid(currentUser?.uid || null);
           setLogs(prev => [...prev, '[Sistema] Servidor detectado en ejecución. Reconectado a la sesión activa.']);
         }
+
 
         const isPlayitRunning = await invoke<boolean>('check_playit_status');
         if (isPlayitRunning) {
@@ -564,77 +636,134 @@ export function App() {
   };
 
   const handleSendTerminalCommand = async () => {
-    if (!isOwnerOrAdmin) return;
+    if (serverStatus !== 'online') return;
     if (!terminalInput.trim()) return;
     const cmd = terminalInput.trim();
     setTerminalInput('');
-    setServerTerminalLogs((prev) => [...prev, `> ${cmd}`]);
 
-    try {
-      await invoke('send_command_to_server', { command: cmd });
-    } catch (err: any) {
-      setServerTerminalLogs((prev) => [...prev, `[Error Consola] ${err}`]);
+    if (isLocalHostRef.current) {
+      // Esta PC es el host local: ejecutar directamente el comando por stdin en el proceso
+      setServerTerminalLogs((prev) => [...prev, `> ${cmd}`]);
+      try {
+        await invoke('send_command_to_server', { command: cmd });
+      } catch (err: any) {
+        setServerTerminalLogs((prev) => [...prev, `[Error Consola] ${err}`]);
+      }
+    } else {
+      // Somos jugador u otro host remoto: enviar comando al host activo mediante Firestore
+      setServerTerminalLogs((prev) => [...prev, `> [Tú] ${cmd}`]);
+      if (activeGroup && localDeviceIdRef.current) {
+        try {
+          await GroupService.updateSyncDeviceState(activeGroup.id, localDeviceIdRef.current, {
+            pendingCommand: {
+              id: `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
+              text: cmd,
+              senderName: currentUser?.displayName || 'Jugador',
+              timestamp: Date.now()
+            }
+          });
+        } catch (err: any) {
+          setServerTerminalLogs((prev) => [...prev, `[Error Envío] ${err}`]);
+        }
+      }
     }
   };
 
   const handleStartServer = async () => {
     if (!canStartServer) return;
-    if (!launcherFile) {
-      alert("Por favor selecciona primero qué archivo/programa iniciará el servidor (en la lista de archivos presiona 'Establecer como Iniciador').");
+    const workingFolder = (role === 'owner' ? serverFolder : localSyncFolder) || serverFolder;
+    const targetLauncher = launcherFile || ownerLauncherFile;
+
+    if (!workingFolder) {
+      alert("Por favor configura primero la carpeta del servidor o carpeta sincronizada.");
+      return;
+    }
+    if (!targetLauncher) {
+      alert("Por favor selecciona primero qué archivo/programa iniciará el servidor (en la lista de archivos presiona 'Hacer Iniciador').");
       return;
     }
 
     setServerStatus('starting');
-    setLogs(prev => [...prev, `[Turno] Solicitando turno atómico al coordinador...`]);
+    setLogs(prev => [...prev, `[Turno] Iniciando servidor como host activo...`]);
 
     try {
       // Iniciar el ejecutable real mediante el proceso Win32 de Tauri
       await invoke('start_game_server', {
-        executablePath: `${serverFolder}\\${launcherFile}`,
-        workingDir: serverFolder
+        executablePath: `${workingFolder}\\${targetLauncher}`,
+        workingDir: workingFolder
       });
+      isLocalHostRef.current = true;
+      setIsLocalHost(true);
       setServerStatus('online');
-      setCurrentHostName('Matias (Mi PC)');
+      const myDisplayName = currentUser?.displayName ? `${currentUser.displayName} (Mi PC)` : 'Mi PC';
+      setCurrentHostName(myDisplayName);
+      if (currentUser?.uid) setCurrentHostUid(currentUser.uid);
       setEpoch(prev => prev + 1);
       setLogs(prev => [
         ...prev, 
-        `[Servidor] Proceso iniciado desde '${launcherFile}' (Win32 CREATE_NO_WINDOW).`,
-        `[Turno] ¡Turno concedido (Época #${epoch + 1})! Túnel activo en: ${tunnelAddress}`
+        `[Servidor] Proceso iniciado desde '${targetLauncher}' (Win32 CREATE_NO_WINDOW).`,
+        `[Turno] ¡Servidor online! Túnel activo en: ${tunnelAddress}`
       ]);
+
+      // Publicar en Firestore que esta máquina es el host activo
+      if (activeGroup && localDeviceIdRef.current) {
+        void GroupService.updateSyncDeviceState(activeGroup.id, localDeviceIdRef.current, {
+          isHosting: true,
+          serverStatus: 'online'
+        });
+      }
     } catch (err: any) {
+      isLocalHostRef.current = false;
+      setIsLocalHost(false);
       setServerStatus('offline');
       setLogs(prev => [...prev, `[Error Arranque] ${typeof err === 'string' ? err : 'No se pudo iniciar el ejecutable.'}`]);
-      alert(`Error al iniciar el servidor desde ${launcherFile}: ${err}`);
+      alert(`Error al iniciar el servidor desde ${targetLauncher}: ${err}`);
     }
   };
 
   const handleStopServer = async () => {
-    if (!isOwnerOrAdmin) return;
+    const canStop = isOwnerOrAdmin || isLocalHostRef.current || (currentHostUid ? currentHostUid === currentUser?.uid : false);
+    if (!canStop) return;
+
     setServerStatus('saving');
     setLogs(prev => [
       ...prev,
       "[Apagado] Deteniendo proceso y guardando datos en disco...",
-      "[P2P] Generando snapshot SHA-256 y replicando a candidatos...",
+      "[P2P] Generando snapshot y replicando a candidatos...",
       "[Turno] Servidor apagado y turno liberado limpiamente."
     ]);
-    try {
-      await invoke('stop_game_server');
-    } catch (e) {
-      console.warn("Stop error:", e);
+
+    if (isLocalHostRef.current) {
+      try {
+        await invoke('stop_game_server');
+      } catch (e) {
+        console.warn("Stop error:", e);
+      }
+      isLocalHostRef.current = false;
+      setIsLocalHost(false);
+      if (activeGroup && localDeviceIdRef.current) {
+        void GroupService.updateSyncDeviceState(activeGroup.id, localDeviceIdRef.current, {
+          isHosting: false,
+          serverStatus: 'offline'
+        });
+      }
     }
+
     setTimeout(() => {
       setServerStatus('offline');
       setCurrentHostName(null);
+      setCurrentHostUid(null);
     }, 1500);
   };
 
   // Guardar archivo real en el disco de Windows
   const handleSaveFile = async () => {
     if (!isOwnerOrAdmin) return;
-    if (!selectedFile || !serverFolder) return;
+    const targetFolder = (role === 'owner' ? serverFolder : localSyncFolder) || serverFolder;
+    if (!selectedFile || !targetFolder) return;
     try {
       await invoke('save_file_content', {
-        basePath: serverFolder,
+        basePath: targetFolder,
         relativePath: selectedFile.name,
         content: fileContent
       });
@@ -879,12 +1008,17 @@ export function App() {
               <div className="text-xs text-slate-400 flex items-center gap-2 mt-0.5">
                 <span>Iniciador:</span>
                 <span className={`font-mono text-xs px-2 py-0.5 rounded border ${
-                  launcherFile 
+                  (launcherFile || ownerLauncherFile)
                     ? 'text-cyan-300 bg-slate-950 border-cyan-500/30' 
                     : 'text-amber-400 bg-amber-500/10 border-amber-500/30'
                 }`}>
-                  {launcherFile ? `▶ ${launcherFile}` : '⚠️ Ningún archivo seleccionado como iniciador'}
+                  {(launcherFile || ownerLauncherFile) ? `▶ ${launcherFile || ownerLauncherFile}` : '⚠️ Ningún archivo seleccionado como iniciador'}
                 </span>
+                {currentHostName && (
+                  <span className="text-[11px] text-emerald-400 font-semibold bg-emerald-950/60 border border-emerald-500/30 px-2 py-0.5 rounded">
+                    Host: {currentHostName}
+                  </span>
+                )}
                 <span>&bull; Dirección:</span>
                 <span 
                   onClick={() => {
@@ -919,7 +1053,7 @@ export function App() {
                 <Power className="w-4 h-4 flex-shrink-0" />
                 <span>Encender servidor</span>
               </button>
-            ) : isOwnerOrAdmin ? (
+            ) : canStopServer ? (
               <button
                 onClick={handleStopServer}
                 disabled={serverStatus === 'saving'}
@@ -929,7 +1063,7 @@ export function App() {
                 <span>{serverStatus === 'saving' ? 'Guardando...' : 'Apagar servidor'}</span>
               </button>
             ) : (
-              <span className="hidden 2xl:inline text-[11px] text-slate-400 px-2 py-2">Servidor encendido · solo admin/propietario puede apagarlo</span>
+              <span className="hidden 2xl:inline text-[11px] text-slate-400 px-2 py-2">Servidor encendido {currentHostName ? `por ${currentHostName}` : ''}</span>
             )}
 
             {isOwnerOrAdmin && serverStatus === 'online' && (
@@ -1315,7 +1449,7 @@ export function App() {
                         <span>/{currentSubDir}</span>
                         {currentSubDir && (
                           <button
-                            onClick={() => loadRealDirectory(serverFolder, '')}
+                            onClick={() => loadRealDirectory((role === 'owner' ? serverFolder : localSyncFolder) || serverFolder, '')}
                             className="text-xs text-indigo-400 hover:underline ml-2"
                           >
                             (Volver a raíz)
@@ -1337,65 +1471,70 @@ export function App() {
                     <div className="bg-slate-950 rounded-xl border border-slate-800 divide-y divide-slate-800/80 overflow-hidden">
                       {mockFiles.length === 0 ? (
                         <div className="p-8 text-center text-xs text-slate-500">
-                          {serverFolder ? 'Carpeta vacía o sin permisos de lectura.' : 'Ingresa una ruta de carpeta arriba y pulsa "Guardar y Cargar".'}
+                          {((role === 'owner' ? serverFolder : localSyncFolder) || serverFolder) ? 'Carpeta vacía o sin permisos de lectura.' : 'Ingresa una ruta de carpeta arriba y pulsa "Guardar y Cargar".'}
                         </div>
                       ) : (
                         mockFiles
                           .filter(f => f.name.toLowerCase().includes(searchQuery.toLowerCase()))
-                          .map((item) => (
-                            <div
-                              key={item.name}
-                              onClick={async () => {
-                                if (item.is_dir) {
-                                  loadRealDirectory(serverFolder, item.name);
-                                } else {
-                                  try {
-                                    const content = await invoke<string>('read_file_content', {
-                                      basePath: serverFolder,
-                                      relativePath: currentSubDir ? `${currentSubDir}/${item.name}` : item.name
-                                    });
-                                    setSelectedFile({ name: item.name, path: item.name, size: item.size, content });
-                                    setFileContent(content);
-                                  } catch (err: any) {
-                                    setSelectedFile({ name: item.name, path: item.name, size: item.size, content: '' });
-                                    setFileContent(`# [Vista previa de ${item.name}]\n# Archivo binario o sin permisos de texto.\n# Tamaño: ${item.size} bytes`);
+                          .map((item) => {
+                            const baseDir = (role === 'owner' ? serverFolder : localSyncFolder) || serverFolder;
+                            const itemRelPath = currentSubDir ? `${currentSubDir}\\${item.name}` : item.name;
+                            const isLauncher = launcherFile === itemRelPath || ownerLauncherFile === itemRelPath;
+                            return (
+                              <div
+                                key={item.name}
+                                onClick={async () => {
+                                  if (item.is_dir) {
+                                    loadRealDirectory(baseDir, item.name);
+                                  } else {
+                                    try {
+                                      const content = await invoke<string>('read_file_content', {
+                                        basePath: baseDir,
+                                        relativePath: currentSubDir ? `${currentSubDir}/${item.name}` : item.name
+                                      });
+                                      setSelectedFile({ name: item.name, path: item.name, size: item.size, content });
+                                      setFileContent(content);
+                                    } catch (err: any) {
+                                      setSelectedFile({ name: item.name, path: item.name, size: item.size, content: '' });
+                                      setFileContent(`# [Vista previa de ${item.name}]\n# Archivo binario o sin permisos de texto.\n# Tamaño: ${item.size} bytes`);
+                                    }
                                   }
-                                }
-                              }}
-                              className="flex items-center justify-between px-4 py-3 hover:bg-slate-900 cursor-pointer transition-all group"
-                            >
-                              <div className="flex items-center gap-3">
-                                {item.is_dir ? <Folder className="w-5 h-5 text-indigo-400" /> : <FileText className="w-5 h-5 text-slate-400 group-hover:text-indigo-400 transition-colors" />}
-                                <span className="text-sm font-medium text-slate-200 group-hover:text-white">{item.name}</span>
+                                }}
+                                className="flex items-center justify-between px-4 py-3 hover:bg-slate-900 cursor-pointer transition-all group"
+                              >
+                                <div className="flex items-center gap-3">
+                                  {item.is_dir ? <Folder className="w-5 h-5 text-indigo-400" /> : <FileText className="w-5 h-5 text-slate-400 group-hover:text-indigo-400 transition-colors" />}
+                                  <span className="text-sm font-medium text-slate-200 group-hover:text-white">{item.name}</span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  {!item.is_dir && (isOwnerOrAdmin || role === 'host') && (
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setLauncherFile(itemRelPath);
+                                        localStorage.setItem('hostshift_launcher_file', itemRelPath);
+                                        if (activeGroup && isOwnerOrAdmin) {
+                                          GroupService.saveGroupServerConfig(activeGroup.id, { launcherFile: itemRelPath });
+                                          GroupService.saveGroupServerConfigToFirestore(activeGroup.id, { launcherFile: itemRelPath });
+                                        }
+                                        setLogs(prev => [...prev, `[Iniciador] Seleccionado '${itemRelPath}' como programa de arranque del servidor.`]);
+                                      }}
+                                      className={`text-[11px] px-2.5 py-1 rounded font-bold transition-all ${
+                                        isLauncher
+                                          ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40'
+                                          : 'bg-slate-800 hover:bg-indigo-600/30 text-slate-400 hover:text-indigo-300 border border-slate-700'
+                                      }`}
+                                    >
+                                      {isLauncher ? '★ Iniciador Activo' : 'Hacer Iniciador'}
+                                    </button>
+                                  )}
+                                  <span className="text-xs text-slate-500 font-mono">
+                                    {item.is_dir ? 'Abrir carpeta →' : `${item.size} B &bull; Editar →`}
+                                  </span>
+                                </div>
                               </div>
-                              <div className="flex items-center gap-2">
-                                {!item.is_dir && isOwnerOrAdmin && (
-                                  <button
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      const path = currentSubDir ? `${currentSubDir}\\${item.name}` : item.name;
-                                      setLauncherFile(path);
-                                      localStorage.setItem('hostshift_launcher_file', path);
-                                      if (activeGroup) {
-                                        GroupService.saveGroupServerConfig(activeGroup.id, { launcherFile: path });
-                                      }
-                                      setLogs(prev => [...prev, `[Iniciador] Seleccionado '${path}' como programa de arranque del servidor.`]);
-                                    }}
-                                    className={`text-[11px] px-2.5 py-1 rounded font-bold transition-all ${
-                                      launcherFile === (currentSubDir ? `${currentSubDir}\\${item.name}` : item.name)
-                                        ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40'
-                                        : 'bg-slate-800 hover:bg-indigo-600/30 text-slate-400 hover:text-indigo-300 border border-slate-700'
-                                    }`}
-                                  >
-                                    {launcherFile === (currentSubDir ? `${currentSubDir}\\${item.name}` : item.name) ? '★ Iniciador Activo' : 'Hacer Iniciador'}
-                                  </button>
-                                )}
-                                <span className="text-xs text-slate-500 font-mono">
-                                  {item.is_dir ? 'Abrir carpeta →' : `${item.size} B &bull; Editar →`}
-                                </span>
-                              </div>
-                            </div>
-                          ))
+                            );
+                          })
                       )}
                     </div>
                   </div>
@@ -1450,13 +1589,13 @@ export function App() {
                     value={terminalInput}
                     onChange={(e) => setTerminalInput(e.target.value)}
                     onKeyDown={(e) => e.key === 'Enter' && handleSendTerminalCommand()}
-                    disabled={serverStatus !== 'online' || !isOwnerOrAdmin}
-                    placeholder={!isOwnerOrAdmin ? 'Solo admin/propietario puede usar la terminal.' : serverStatus === 'online' ? "Escribe un comando para el servidor (ej: help, save, op, whitelist)..." : "El servidor debe estar ENCENDIDO para enviar comandos."}
+                    disabled={serverStatus !== 'online'}
+                    placeholder={serverStatus === 'online' ? "Escribe un comando para el servidor (ej: help, save, op, whitelist)..." : "El servidor debe estar ENCENDIDO para enviar comandos."}
                     className="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-xs font-mono text-slate-200 outline-none focus:border-indigo-500 placeholder-slate-600 disabled:opacity-50"
                   />
                   <button
                     onClick={handleSendTerminalCommand}
-                    disabled={serverStatus !== 'online' || !isOwnerOrAdmin || !terminalInput.trim()}
+                    disabled={serverStatus !== 'online' || !terminalInput.trim()}
                     className="bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 disabled:text-slate-600 text-white px-5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shadow-lg"
                   >
                     <Send className="w-3.5 h-3.5" /> Enviar

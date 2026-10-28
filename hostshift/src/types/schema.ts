@@ -30,6 +30,15 @@ export interface SyncDeviceDocument {
   userId: string;
   displayName: string;
   updatedAt: number;
+  isHosting?: boolean;
+  serverStatus?: 'offline' | 'starting' | 'online' | 'saving';
+  consoleLogs?: string[];
+  pendingCommand?: {
+    id: string;
+    text: string;
+    senderName: string;
+    timestamp: number;
+  };
 }
 
 // 4. Membresía (Colección anidada: /groups/{groupId}/members/{userId})

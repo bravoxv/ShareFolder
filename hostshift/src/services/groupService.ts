@@ -256,10 +256,36 @@ export class GroupService {
     return user.displayName || user.email?.split('@')[0] || 'Propietario';
   }
 
-  static async publishSyncDevice(groupId: string, deviceId: string, displayName: string): Promise<void> {
+  static async publishSyncDevice(
+    groupId: string, 
+    deviceId: string, 
+    displayName: string, 
+    extra?: Partial<SyncDeviceDocument>
+  ): Promise<void> {
     const user = await this.requireFirebaseUser();
-    const data: SyncDeviceDocument = { deviceId, userId: user.uid, displayName, updatedAt: Date.now() };
+    const data: SyncDeviceDocument = { 
+      deviceId, 
+      userId: user.uid, 
+      displayName, 
+      updatedAt: Date.now(),
+      ...extra 
+    };
     await setDoc(doc(db, 'groups', groupId, 'sync_devices', deviceId), data, { merge: true });
+  }
+
+  static async updateSyncDeviceState(
+    groupId: string, 
+    deviceId: string, 
+    updates: Partial<SyncDeviceDocument>
+  ): Promise<void> {
+    try {
+      await updateDoc(doc(db, 'groups', groupId, 'sync_devices', deviceId), {
+        ...updates,
+        updatedAt: Date.now()
+      });
+    } catch (e) {
+      console.warn('Error actualizando estado de dispositivo en Firestore:', e);
+    }
   }
 
   static watchSyncDevices(groupId: string, onChange: (devices: SyncDeviceDocument[]) => void, onError?: (error: Error) => void): () => void {

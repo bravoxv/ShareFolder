@@ -2,8 +2,8 @@
   "files": [
     {
       "path": "bin/HostShift.exe",
-      "size": 9169408,
-      "sha256": "99006dac2b596d1a3da8111fead27bf1e0686c722aa985ffa75bae083d93739d",
+      "size": 9284608,
+      "sha256": "c6b7a6fa27a32884dd7ec508ecb69087bc6f2cf8f373b7b2173cebbb25ca4f35",
       "target": "executable"
     },
     {

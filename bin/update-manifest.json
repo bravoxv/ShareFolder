@@ -13,9 +13,9 @@
       "path": "hostshift/src-tauri/binaries/syncthing.exe"
     },
     {
-      "sha256": "9221c2f936159b8446d329249fb4c0f25be510f447383a0f13336ac7985668a3",
+      "sha256": "3f3d9e0024b1921b067d6f7f88deb4a60cbe7a78e76c64e3f1d7fc3b779b9d04",
       "target": "syncthing_license",
-      "size": 17099,
+      "size": 16726,
       "path": "hostshift/src-tauri/binaries/SYNCTHING-LICENSE.txt"
     }
   ]

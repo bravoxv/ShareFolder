@@ -1,22 +1,22 @@
 {
   "files": [
     {
+      "target": "executable",
       "path": "bin/HostShift.exe",
-      "size": 9284608,
-      "sha256": "c6b7a6fa27a32884dd7ec508ecb69087bc6f2cf8f373b7b2173cebbb25ca4f35",
-      "target": "executable"
+      "size": 9169408,
+      "sha256": "d718cd55bcb13c8ec8dfe0c488efb697850c0d6de56e2b84e3619ca18ac94f86"
     },
     {
+      "target": "syncthing_binary",
       "path": "hostshift/src-tauri/binaries/syncthing.exe",
       "size": 27448576,
-      "sha256": "e33d934db704c9a3c7c46488d34ba655d676ac17234f01f3025740ffa4655dae",
-      "target": "syncthing_binary"
+      "sha256": "e33d934db704c9a3c7c46488d34ba655d676ac17234f01f3025740ffa4655dae"
     },
     {
+      "target": "syncthing_license",
       "path": "hostshift/src-tauri/binaries/SYNCTHING-LICENSE.txt",
       "size": 17099,
-      "sha256": "9221c2f936159b8446d329249fb4c0f25be510f447383a0f13336ac7985668a3",
-      "target": "syncthing_license"
+      "sha256": "9221c2f936159b8446d329249fb4c0f25be510f447383a0f13336ac7985668a3"
     }
   ]
 }

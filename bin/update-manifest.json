@@ -3,8 +3,9 @@
     {
       "target": "executable",
       "path": "bin/HostShift.exe",
-      "size": 8774144,
-      "sha256": "809bf345bae42b6502c08edd4e6755be761cf2915acd41b07f71e65f1f1df637"
+      "size": 8859648,
+      "sha256": "44960ae7b18ec36662f9314cde3476d1c12ab787f698ec3f9ef47f1c1ec9bb6e",
+      "target": "executable"
     },
     {
       "target": "syncthing_binary",

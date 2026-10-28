@@ -228,14 +228,23 @@ pub fn syncthing_connect_group(
         device["deviceID"] = json!(device_id);
         device["name"] = json!(format!("HostShift {}", &device_id[..8]));
         device["addresses"] = json!(["dynamic"]);
-        device["autoAcceptFolders"] = json!(false);
-        let _: Value = api(
+        device["autoAcceptFolders"] = json!(true);
+        // Intentar actualizar si ya existe (PUT) o crear (POST)
+        let _ = api::<Value>(
             &client,
             process,
-            reqwest::Method::POST,
-            "/rest/config/devices",
-            Some(device),
-        )?;
+            reqwest::Method::PUT,
+            &format!("/rest/config/devices/{}", device_id),
+            Some(device.clone()),
+        ).or_else(|_| {
+            api::<Value>(
+                &client,
+                process,
+                reqwest::Method::POST,
+                "/rest/config/devices",
+                Some(device),
+            )
+        });
     }
 
     // Asegurar archivo .stignore para evitar bloqueos en caliente de mundos activos (ej: session.lock, crash-reports)
@@ -261,19 +270,119 @@ pub fn syncthing_connect_group(
     } else {
         "receiveonly"
     });
-    // Intervalo de escaneo rápido para cambios en caliente (5 segundos)
-    folder["rescanIntervalS"] = json!(5);
+    // Intervalo de escaneo rápido para cambios en caliente (3 segundos)
+    folder["rescanIntervalS"] = json!(3);
     let mut shared_devices = vec![json!({ "deviceID": own_id })];
     shared_devices.extend(devices.iter().map(|id| json!({ "deviceID": id })));
     folder["devices"] = json!(shared_devices);
-    let _: Value = api(
+    
+    // Si la carpeta ya existe, actualizarla vía PUT para añadir nuevos dispositivos, sino POST
+    let _ = api::<Value>(
+        &client,
+        process,
+        reqwest::Method::PUT,
+        &format!("/rest/config/folders/{}", folder_id),
+        Some(folder.clone()),
+    ).or_else(|_| {
+        api::<Value>(
+            &client,
+            process,
+            reqwest::Method::POST,
+            "/rest/config/folders",
+            Some(folder),
+        )
+    });
+
+    // Solicitar rescan inmediato para detectar archivos nuevos al conectarse
+    let _ = api::<Value>(
         &client,
         process,
         reqwest::Method::POST,
-        "/rest/config/folders",
-        Some(folder),
-    )?;
+        &format!("/rest/db/scan?folder={}", folder_id),
+        None,
+    );
+
     Ok(json!({"deviceId": own_id, "peerCount": devices.len(), "folderId": folder_id}))
+}
+
+#[derive(serde::Serialize, Default)]
+pub struct FolderSyncStatus {
+    pub state: String,
+    pub need_bytes: u64,
+    pub global_bytes: u64,
+    pub in_sync_bytes: u64,
+    pub need_files: u64,
+    pub completion_pct: f64,
+    pub peers_connected: usize,
+}
+
+#[tauri::command]
+pub fn syncthing_get_folder_status(
+    app: tauri::AppHandle,
+    group_id: String,
+) -> Result<FolderSyncStatus, String> {
+    let mut state = ensure_running(&app)?;
+    let process = state.as_mut().ok_or("Syncthing no está iniciado.")?;
+    let client = Client::builder()
+        .timeout(Duration::from_secs(3))
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let folder_id = format!("hostshift-{}", group_id);
+
+    // 1. Obtener estado de la carpeta (/rest/db/status)
+    let status_res: Value = api(
+        &client,
+        process,
+        reqwest::Method::GET,
+        &format!("/rest/db/status?folder={}", folder_id),
+        None,
+    ).unwrap_or(json!({}));
+
+    let state_str = status_res.get("state").and_then(Value::as_str).unwrap_or("idle").to_string();
+    let need_bytes = status_res.get("needBytes").and_then(Value::as_u64).unwrap_or(0);
+    let global_bytes = status_res.get("globalBytes").and_then(Value::as_u64).unwrap_or(0);
+    let in_sync_bytes = status_res.get("inSyncBytes").and_then(Value::as_u64).unwrap_or(0);
+    let need_files = status_res.get("needFiles").and_then(Value::as_u64).unwrap_or(0);
+
+    // 2. Obtener porcentaje de completitud (/rest/db/completion)
+    let completion_res: Value = api(
+        &client,
+        process,
+        reqwest::Method::GET,
+        &format!("/rest/db/completion?folder={}", folder_id),
+        None,
+    ).unwrap_or(json!({}));
+
+    let completion_pct = completion_res.get("completion").and_then(Value::as_f64).unwrap_or(100.0);
+
+    // 3. Contar conexiones activas (/rest/system/connections)
+    let conns_res: Value = api(
+        &client,
+        process,
+        reqwest::Method::GET,
+        "/rest/system/connections",
+        None,
+    ).unwrap_or(json!({}));
+
+    let mut peers_connected = 0;
+    if let Some(conns) = conns_res.get("connections").and_then(Value::as_object) {
+        for (_dev, info) in conns {
+            if info.get("connected").and_then(Value::as_bool).unwrap_or(false) {
+                peers_connected += 1;
+            }
+        }
+    }
+
+    Ok(FolderSyncStatus {
+        state: state_str,
+        need_bytes,
+        global_bytes,
+        in_sync_bytes,
+        need_files,
+        completion_pct,
+        peers_connected,
+    })
 }
 
 #[tauri::command]

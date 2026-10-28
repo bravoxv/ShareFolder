@@ -228,6 +228,23 @@ export function App() {
   // Ruta del servidor del propietario, publicada en Firestore y leída por todos los miembros
   const [ownerServerFolder, setOwnerServerFolder] = useState<string>('');
 
+  // Progreso de sincronización en vivo (porcentaje, estado y bytes)
+  const [syncProgress, setSyncProgress] = useState<{
+    state: string;
+    completionPct: number;
+    needBytes: number;
+    globalBytes: number;
+    needFiles: number;
+    peersConnected: number;
+  }>({
+    state: 'idle',
+    completionPct: 100,
+    needBytes: 0,
+    globalBytes: 0,
+    needFiles: 0,
+    peersConnected: 0,
+  });
+
   useEffect(() => {
     if (!activeGroup || !currentUser || !groupAccessReady) return;
     return GroupService.watchGroupReloadSignal(activeGroup.id, () => {
@@ -247,7 +264,38 @@ export function App() {
   }, [activeGroup?.id, groupAccessReady]);
 
   const isHostOrAdmin = role === 'owner' || role === 'admin' || role === 'host';
-  const isBroadcastingFiles = isHostOrAdmin && serverStatus === 'online';
+  // El propietario siempre comparte (canPublish=true). Hosts/admins solo publican si tienen el servidor online.
+  const isBroadcastingFiles = role === 'owner' || (isHostOrAdmin && serverStatus === 'online');
+
+  // Polling del progreso de sincronización cada 2 segundos
+  useEffect(() => {
+    if (!activeGroup || !groupAccessReady) return;
+    const interval = setInterval(async () => {
+      try {
+        const res = await invoke<{
+          state: string;
+          need_bytes: number;
+          global_bytes: number;
+          in_sync_bytes: number;
+          need_files: number;
+          completion_pct: number;
+          peers_connected: number;
+        }>('syncthing_get_folder_status', { groupId: activeGroup.id });
+        setSyncProgress({
+          state: res.state,
+          completionPct: Math.round(res.completion_pct),
+          needBytes: res.need_bytes,
+          globalBytes: res.global_bytes,
+          needFiles: res.need_files,
+          peersConnected: res.peers_connected,
+        });
+      } catch {
+        // syncthing aún no iniciado o inactivo
+      }
+    }, 2000);
+    return () => clearInterval(interval);
+  }, [activeGroup?.id, groupAccessReady]);
+
 
   // Carpeta a sincronizar: solo el owner usa serverFolder (origen); admins, hosts y players en sus PCs usan localSyncFolder
   const syncFolderPath = role === 'owner' ? serverFolder : localSyncFolder;
@@ -1081,16 +1129,67 @@ export function App() {
                       </div>
                     </div>
 
-                    {/* Estado de sincronización */}
-                    <div className="flex items-center gap-2 pt-1">
-                      <div className={`w-2 h-2 rounded-full ${syncConnectionError ? 'bg-rose-400' : syncFolderPath ? 'bg-emerald-400 animate-pulse' : 'bg-slate-600'}`} />
-                      <span className="text-xs text-slate-400">
-                        {syncConnectionError
-                          ? `Error de sync: ${syncConnectionError}`
-                          : syncFolderPath
-                            ? `Syncthing activo en tu carpeta local`
-                            : 'Ingresa tu carpeta local para sincronizar los archivos.'}
-                      </span>
+                    {/* Estado de sincronización y Barra de Carga */}
+                    <div className="space-y-2 pt-1 border-t border-slate-800/80">
+                      <div className="flex items-center justify-between text-xs">
+                        <div className="flex items-center gap-2">
+                          <div className={`w-2.5 h-2.5 rounded-full ${
+                            syncConnectionError 
+                              ? 'bg-rose-500' 
+                              : syncProgress.state === 'syncing'
+                                ? 'bg-amber-400 animate-spin'
+                                : syncFolderPath 
+                                  ? 'bg-emerald-400 animate-pulse' 
+                                  : 'bg-slate-600'
+                          }`} />
+                          <span className="text-slate-300 font-medium">
+                            {syncConnectionError
+                              ? `Error: ${syncConnectionError}`
+                              : syncProgress.state === 'syncing'
+                                ? `Descargando archivos (${syncProgress.needFiles} restantes)...`
+                                : syncProgress.completionPct < 100
+                                  ? `Sincronizando (${syncProgress.completionPct}%)...`
+                                  : syncFolderPath
+                                    ? `Al día (100% sincronizado)`
+                                    : 'Ingresa tu carpeta local para sincronizar los archivos.'}
+                          </span>
+                        </div>
+                        {syncFolderPath && !syncConnectionError && (
+                          <span className="text-cyan-400 font-mono font-bold">
+                            {syncProgress.completionPct}%
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Barra de progreso interactiva */}
+                      {syncFolderPath && !syncConnectionError && (
+                        <div className="w-full bg-slate-950 rounded-full h-2.5 overflow-hidden border border-slate-800">
+                          <div
+                            className={`h-full transition-all duration-500 ${
+                              syncProgress.completionPct === 100
+                                ? 'bg-emerald-500'
+                                : 'bg-gradient-to-r from-cyan-500 to-indigo-500 animate-pulse'
+                            }`}
+                            style={{ width: `${Math.min(100, Math.max(0, syncProgress.completionPct))}%` }}
+                          />
+                        </div>
+                      )}
+
+                      {/* Detalles de transferencia y peers conectados */}
+                      {syncFolderPath && !syncConnectionError && (
+                        <div className="flex items-center justify-between text-[11px] text-slate-500 font-mono">
+                          <span>
+                            {syncProgress.needBytes > 0
+                              ? `Pendiente: ${(syncProgress.needBytes / (1024 * 1024)).toFixed(2)} MB`
+                              : `Total en disco: ${(syncProgress.globalBytes / (1024 * 1024)).toFixed(2)} MB`}
+                          </span>
+                          <span>
+                            {syncProgress.peersConnected > 0
+                              ? `Conectado a ${syncProgress.peersConnected} dispositivo(s)`
+                              : 'Buscando dispositivos en la red...'}
+                          </span>
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>

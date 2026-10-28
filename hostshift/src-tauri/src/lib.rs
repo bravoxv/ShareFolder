@@ -13,7 +13,7 @@ use git_updater::{apply_git_updates, check_git_updates};
 use integrity_engine::generate_directory_manifest;
 use process_manager::ServerProcessManager;
 use std::{sync::Mutex, time::Duration};
-use syncthing::{syncthing_connect_group, syncthing_stop};
+use syncthing::{syncthing_connect_group, syncthing_get_folder_status, syncthing_stop};
 use tauri::Emitter;
 
 static PROCESS_MANAGER: Mutex<Option<ServerProcessManager>> = Mutex::new(None);
@@ -412,6 +412,7 @@ pub fn run() {
             check_git_updates,
             apply_git_updates,
             syncthing_connect_group,
+            syncthing_get_folder_status,
             syncthing_stop
         ])
         .build(tauri::generate_context!())

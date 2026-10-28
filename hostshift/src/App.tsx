@@ -228,8 +228,12 @@ export function App() {
     }, error => console.warn('No se pudo escuchar la señal de recarga del grupo:', error));
   }, [activeGroup?.id, currentUser?.uid, groupAccessReady]);
 
+  const isHostOrAdmin = role === 'owner' || role === 'admin' || role === 'host';
+  const isBroadcastingFiles = isHostOrAdmin && serverStatus === 'online';
+
   useEffect(() => {
-    if (!activeGroup || !currentUser || !groupAccessReady || !serverFolder) return;
+    // Solo sincronizar si es owner, admin o host, y tiene carpeta de servidor configurada
+    if (!activeGroup || !currentUser || !groupAccessReady || !serverFolder || !isHostOrAdmin) return;
     let cancelled = false;
     let stopWatching: (() => void) | null = null;
     const connect = async () => {
@@ -238,7 +242,7 @@ export function App() {
           groupId: activeGroup.id,
           folderPath: serverFolder,
           peerIds: [],
-          canPublish: role === 'owner' || role === 'admin'
+          canPublish: isBroadcastingFiles
         });
         if (cancelled) return;
         await GroupService.publishSyncDevice(activeGroup.id, local.deviceId, currentUser.displayName);
@@ -248,7 +252,7 @@ export function App() {
             groupId: activeGroup.id,
             folderPath: serverFolder,
             peerIds: devices.map(device => device.deviceId),
-            canPublish: role === 'owner' || role === 'admin'
+            canPublish: isBroadcastingFiles
           }).then(() => { if (!cancelled) setSyncConnectionError(''); })
             .catch(error => { if (!cancelled) setSyncConnectionError(error instanceof Error ? error.message : String(error)); });
         }, error => { if (!cancelled) setSyncConnectionError(error.message); });
@@ -258,7 +262,7 @@ export function App() {
     };
     void connect();
     return () => { cancelled = true; stopWatching?.(); };
-  }, [activeGroup?.id, currentUser?.uid, currentUser?.displayName, groupAccessReady, serverFolder, role]);
+  }, [activeGroup?.id, currentUser?.uid, currentUser?.displayName, groupAccessReady, serverFolder, isHostOrAdmin, isBroadcastingFiles]);
 
   useEffect(() => {
     if (pendingGroupReload && !isSharedTransferBusy && !sharedTransferBusyRef.current) {

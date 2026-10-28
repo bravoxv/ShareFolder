@@ -213,6 +213,13 @@ pub fn syncthing_connect_group(
         )?;
     }
 
+    // Asegurar archivo .stignore para evitar bloqueos en caliente de mundos activos (ej: session.lock, crash-reports)
+    let ignore_path = PathBuf::from(&folder_path).join(".stignore");
+    if !ignore_path.exists() {
+        let default_ignores = "# Archivos bloqueados en caliente por servidores dedicados\nsession.lock\n*.log.lck\n*.tmp\ncrash-reports\n";
+        let _ = fs::write(&ignore_path, default_ignores);
+    }
+
     let folder_id = format!("hostshift-{}", group_id);
     let mut folder: Value = api(
         &client,
@@ -229,6 +236,8 @@ pub fn syncthing_connect_group(
     } else {
         "receiveonly"
     });
+    // Intervalo de escaneo rápido para cambios en caliente (5 segundos)
+    folder["rescanIntervalS"] = json!(5);
     let mut shared_devices = vec![json!({ "deviceID": own_id })];
     shared_devices.extend(devices.iter().map(|id| json!({ "deviceID": id })));
     folder["devices"] = json!(shared_devices);

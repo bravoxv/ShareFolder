@@ -249,12 +249,12 @@ export function App() {
   const isHostOrAdmin = role === 'owner' || role === 'admin' || role === 'host';
   const isBroadcastingFiles = isHostOrAdmin && serverStatus === 'online';
 
-  // Carpeta a sincronizar: owner/admin usan serverFolder, host/player usan localSyncFolder
-  const syncFolderPath = isOwnerOrAdmin ? serverFolder : localSyncFolder;
+  // Carpeta a sincronizar: solo el owner usa serverFolder (origen); admins, hosts y players en sus PCs usan localSyncFolder
+  const syncFolderPath = role === 'owner' ? serverFolder : localSyncFolder;
 
   useEffect(() => {
-    const folderToUse = isOwnerOrAdmin ? serverFolder : localSyncFolder;
-    if (!activeGroup || !currentUser || !groupAccessReady || !folderToUse || !isHostOrAdmin) return;
+    const folderToUse = role === 'owner' ? serverFolder : localSyncFolder;
+    if (!activeGroup || !currentUser || !groupAccessReady || !folderToUse) return;
     let cancelled = false;
     let stopWatching: (() => void) | null = null;
     const connect = async () => {
@@ -283,7 +283,7 @@ export function App() {
     };
     void connect();
     return () => { cancelled = true; stopWatching?.(); };
-  }, [activeGroup?.id, currentUser?.uid, currentUser?.displayName, groupAccessReady, serverFolder, localSyncFolder, isHostOrAdmin, isBroadcastingFiles, isOwnerOrAdmin]);
+  }, [activeGroup?.id, currentUser?.uid, currentUser?.displayName, groupAccessReady, serverFolder, localSyncFolder, role, isBroadcastingFiles]);
 
 
   useEffect(() => {
@@ -767,15 +767,14 @@ export function App() {
           </div>
 
           {/* Compartir Servidor y Archivos (P2P Link) */}
-          {role !== 'host' && (
-            <button
-              onClick={() => setIsShareOpen(true)}
-              className="w-full py-2.5 px-3 bg-cyan-600/20 hover:bg-cyan-600/30 text-cyan-300 border border-cyan-500/30 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2"
-            >
-              <Share2 className="w-4 h-4" />
-              Compartir Archivos y Servidor
-            </button>
-          )}
+          <button
+            onClick={() => setIsShareOpen(true)}
+            className="w-full py-2.5 px-3 bg-cyan-600/20 hover:bg-cyan-600/30 text-cyan-300 border border-cyan-500/30 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2"
+          >
+            <Share2 className="w-4 h-4" />
+            Compartir Archivos y Servidor
+          </button>
+
 
           {/* Invitación Privada */}
           {isOwnerOrAdmin && <div className="bg-slate-950 p-4 rounded-xl border border-slate-800">
@@ -1022,18 +1021,26 @@ export function App() {
                   : 'opacity-0 -translate-x-12 absolute top-0 left-0 w-full pointer-events-none'
               }`}
             >
-              {/* PANEL DE SYNC PARA MIEMBROS NO-OWNER: muestra carpeta del propietario y permite configurar carpeta local */}
-              {!isOwnerOrAdmin && (
+              {/* PANEL DE SYNC PARA MIEMBROS QUE NO SON EL PROPIETARIO (Admin en otra PC, Host o Jugador) */}
+              {role !== 'owner' && (
                 <div className="mb-5 bg-slate-900 border border-indigo-500/20 rounded-2xl overflow-hidden shadow-xl">
-                  <div className="bg-indigo-950/40 px-6 py-3 border-b border-indigo-500/20 flex items-center gap-2">
-                    <Share2 className="w-4 h-4 text-indigo-400" />
-                    <span className="text-sm font-bold text-indigo-200">Sincronización con el Servidor del Propietario</span>
+                  <div className="bg-indigo-950/40 px-6 py-3 border-b border-indigo-500/20 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Share2 className="w-4 h-4 text-indigo-400" />
+                      <span className="text-sm font-bold text-indigo-200">Sincronización P2P Automática</span>
+                    </div>
+                    <button
+                      onClick={() => setIsShareOpen(true)}
+                      className="text-xs bg-cyan-600/20 hover:bg-cyan-600/30 text-cyan-300 border border-cyan-500/30 px-3 py-1 rounded-lg font-semibold transition-all flex items-center gap-1.5"
+                    >
+                      <Share2 className="w-3.5 h-3.5" /> Abrir Gestor de Sync
+                    </button>
                   </div>
                   <div className="p-5 space-y-4">
                     {/* Ruta del servidor del propietario (read-only) */}
                     <div>
                       <span className="text-xs font-semibold text-slate-400 block mb-1.5">
-                        📁 Carpeta del servidor (configurada por el propietario):
+                        📁 Carpeta del servidor del propietario:
                       </span>
                       <div className="flex items-center gap-2 bg-slate-950 border border-slate-700 rounded-lg px-3 py-2">
                         <span className="text-xs font-mono text-emerald-300 flex-1 truncate">
@@ -1048,7 +1055,7 @@ export function App() {
                     {/* Carpeta local del miembro para recibir archivos */}
                     <div>
                       <span className="text-xs font-semibold text-slate-400 block mb-1.5">
-                        💾 Tu carpeta local (donde recibirás los archivos del servidor):
+                        💾 Tu carpeta local en esta PC (donde recibirás los archivos):
                       </span>
                       <div className="flex items-center gap-2">
                         <input
@@ -1081,8 +1088,8 @@ export function App() {
                         {syncConnectionError
                           ? `Error de sync: ${syncConnectionError}`
                           : syncFolderPath
-                            ? `Syncthing activo — sincronizando desde "${ownerServerFolder || 'servidor'}"`
-                            : 'Ingresa tu carpeta local para activar la sincronización automática.'}
+                            ? `Syncthing activo en tu carpeta local`
+                            : 'Ingresa tu carpeta local para sincronizar los archivos.'}
                       </span>
                     </div>
                   </div>
@@ -1094,12 +1101,12 @@ export function App() {
                 <div className="bg-slate-950 px-6 py-4 border-b border-slate-800 flex items-center gap-3">
                   <FolderOpen className="w-5 h-5 text-indigo-400 flex-shrink-0" />
                   <span className="text-xs font-semibold text-slate-300 whitespace-nowrap">
-                    {isOwnerOrAdmin ? 'Ruta de Carpeta:' : 'Archivos del servidor (vista):'}
+                    {role === 'owner' ? 'Ruta de Carpeta Principal:' : 'Archivos del servidor (vista):'}
                   </span>
                   <input
                     type="text"
-                    value={isOwnerOrAdmin ? serverFolder : (ownerServerFolder || serverFolder)}
-                    disabled={!isOwnerOrAdmin}
+                    value={role === 'owner' ? serverFolder : (localSyncFolder || ownerServerFolder || serverFolder)}
+                    disabled={role !== 'owner'}
                     placeholder="Ejemplo: C:\Servidores\MiJuego o D:\GameServers\Server1"
                     onChange={(e) => {
                       const val = e.target.value;
@@ -1111,23 +1118,34 @@ export function App() {
                     }}
                     className="w-full bg-slate-900 border border-slate-700 text-xs font-mono text-slate-200 px-3 py-2 rounded-lg outline-none focus:border-indigo-500 placeholder-slate-600 disabled:cursor-not-allowed disabled:opacity-60"
                   />
-                  <button
-                    onClick={() => {
-                      localStorage.setItem('hostshift_server_folder', serverFolder);
-                      if (activeGroup) {
-                        GroupService.saveGroupServerConfig(activeGroup.id, { serverFolder });
-                        // Publicar en Firestore para que todos los miembros vean la ruta
-                        void GroupService.saveGroupServerConfigToFirestore(activeGroup.id, { serverFolder });
-                      }
-                      loadRealDirectory(serverFolder, '', true);
-                    }}
-                    disabled={!isOwnerOrAdmin}
-                    title={!isOwnerOrAdmin ? 'Solo admin/propietario puede cambiar la configuración del servidor.' : undefined}
-                    className="bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 disabled:text-slate-500 disabled:cursor-not-allowed text-white text-xs font-bold px-4 py-2 rounded-lg transition-all flex items-center gap-1.5 flex-shrink-0 shadow-md shadow-indigo-900/30 hover:scale-[1.02]"
-                  >
-                    <RefreshCw className="w-3.5 h-3.5" /> Guardar y Cargar
-                  </button>
+                  {role === 'owner' ? (
+                    <button
+                      onClick={() => {
+                        localStorage.setItem('hostshift_server_folder', serverFolder);
+                        if (activeGroup) {
+                          GroupService.saveGroupServerConfig(activeGroup.id, { serverFolder });
+                          // Publicar en Firestore para que todos los miembros vean la ruta
+                          void GroupService.saveGroupServerConfigToFirestore(activeGroup.id, { serverFolder });
+                        }
+                        loadRealDirectory(serverFolder, '', true);
+                      }}
+                      className="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold px-4 py-2 rounded-lg transition-all flex items-center gap-1.5 flex-shrink-0 shadow-md shadow-indigo-900/30 hover:scale-[1.02]"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5" /> Guardar y Cargar
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => {
+                        const target = localSyncFolder || ownerServerFolder;
+                        if (target) loadRealDirectory(target, '', true);
+                      }}
+                      className="bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold px-4 py-2 rounded-lg transition-all flex items-center gap-1.5 flex-shrink-0"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5" /> Recargar Archivos
+                    </button>
+                  )}
                 </div>
+
 
 
                 {/* Banner de Notificación Visual de Guardado y Carga */}

@@ -100,6 +100,18 @@ fn ensure_running(
     let port = listener.local_addr().map_err(|e| e.to_string())?.port();
     drop(listener);
 
+    #[cfg(windows)]
+    {
+        // Matar cualquier syncthing.exe huérfano previo que mantenga bloqueada la base de datos sqlite
+        let _ = Command::new("taskkill")
+            .args(["/F", "/IM", "syncthing.exe"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+        thread::sleep(Duration::from_millis(300));
+    }
+
     let mut command = Command::new(executable);
     command
         .args([
@@ -126,10 +138,10 @@ fn ensure_running(
         port,
     };
     let client = Client::builder()
-        .timeout(Duration::from_secs(4))
+        .timeout(Duration::from_secs(5))
         .build()
         .map_err(|e| e.to_string())?;
-    let deadline = Instant::now() + Duration::from_secs(20);
+    let deadline = Instant::now() + Duration::from_secs(45);
     loop {
         if Instant::now() > deadline {
             let mut child = process.child;

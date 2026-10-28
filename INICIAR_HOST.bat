@@ -29,20 +29,20 @@ echo [*] Buscando ejecutable autonomo compilado...
 echo [*] Buscando ejecutable autonomo compilado... >> "%LOG_FILE%"
 
 set "EXE_PATH="
-if exist "%LocalAppData%\Programs\hostshift\hostshift.exe" (
+if exist "%SCRIPT_DIR%bin\HostShift.exe" (
+    set "EXE_PATH=%SCRIPT_DIR%bin\HostShift.exe"
+) else if exist "%SCRIPT_DIR%hostshift\src-tauri\target\release\hostshift.exe" (
+    set "EXE_PATH=%SCRIPT_DIR%hostshift\src-tauri\target\release\hostshift.exe"
+) else if exist "%LocalAppData%\Programs\hostshift\hostshift.exe" (
     set "EXE_PATH=%LocalAppData%\Programs\hostshift\hostshift.exe"
 ) else if exist "%ProgramFiles%\hostshift\hostshift.exe" (
     set "EXE_PATH=%ProgramFiles%\hostshift\hostshift.exe"
-) else if exist "%SCRIPT_DIR%hostshift\src-tauri\target\debug\hostshift.exe" (
-    set "EXE_PATH=%SCRIPT_DIR%hostshift\src-tauri\target\debug\hostshift.exe"
-) else if exist "%SCRIPT_DIR%hostshift\src-tauri\target\release\hostshift.exe" (
-    set "EXE_PATH=%SCRIPT_DIR%hostshift\src-tauri\target\release\hostshift.exe"
-) else if exist "%SCRIPT_DIR%bin\HostShift.exe" (
-    set "EXE_PATH=%SCRIPT_DIR%bin\HostShift.exe"
 ) else if exist "%SCRIPT_DIR%hostshift.exe" (
     set "EXE_PATH=%SCRIPT_DIR%hostshift.exe"
 ) else if exist "%SCRIPT_DIR%HostShift-Instalador.exe" (
     set "EXE_PATH=%SCRIPT_DIR%HostShift-Instalador.exe"
+) else if exist "%SCRIPT_DIR%hostshift\src-tauri\target\debug\hostshift.exe" (
+    set "EXE_PATH=%SCRIPT_DIR%hostshift\src-tauri\target\debug\hostshift.exe"
 ) else if exist "%SCRIPT_DIR%..\hostshift\src-tauri\target\release\hostshift.exe" (
     set "EXE_PATH=%SCRIPT_DIR%..\hostshift\src-tauri\target\release\hostshift.exe"
 )

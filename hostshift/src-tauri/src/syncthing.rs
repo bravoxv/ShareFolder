@@ -67,7 +67,20 @@ fn ensure_running(
         .path()
         .resolve("binaries/syncthing.exe", BaseDirectory::Resource)
         .or_else(|_| app.path().resolve("syncthing.exe", BaseDirectory::Resource))
-        .map_err(|e| format!("No se encontró el motor Syncthing incluido: {}", e))?;
+        .ok()
+        .filter(|p| p.exists())
+        .or_else(|| {
+            std::env::current_exe().ok().and_then(|exe| {
+                let dir = exe.parent()?;
+                let candidates = [
+                    dir.join("binaries").join("syncthing.exe"),
+                    dir.join("syncthing.exe"),
+                    dir.join("..").join("hostshift").join("src-tauri").join("binaries").join("syncthing.exe"),
+                ];
+                candidates.into_iter().find(|p| p.exists())
+            })
+        })
+        .ok_or_else(|| "No se encontró el motor Syncthing incluido en el sistema o carpeta de la app.".to_string())?;
     let home = app
         .path()
         .app_data_dir()

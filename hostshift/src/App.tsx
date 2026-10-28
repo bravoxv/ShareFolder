@@ -220,6 +220,14 @@ export function App() {
     return localStorage.getItem('hostshift_launcher_file') || '';
   });
 
+  // Carpeta local del miembro (host/player) donde recibirá los archivos sincronizados del propietario
+  const [localSyncFolder, setLocalSyncFolder] = useState<string>(() => {
+    return localStorage.getItem('hostshift_local_sync_folder') || '';
+  });
+
+  // Ruta del servidor del propietario, publicada en Firestore y leída por todos los miembros
+  const [ownerServerFolder, setOwnerServerFolder] = useState<string>('');
+
   useEffect(() => {
     if (!activeGroup || !currentUser || !groupAccessReady) return;
     return GroupService.watchGroupReloadSignal(activeGroup.id, () => {
@@ -228,19 +236,32 @@ export function App() {
     }, error => console.warn('No se pudo escuchar la señal de recarga del grupo:', error));
   }, [activeGroup?.id, currentUser?.uid, groupAccessReady]);
 
+  // Observar en Firestore la ruta del servidor publicada por el propietario
+  useEffect(() => {
+    if (!activeGroup || !groupAccessReady) return;
+    return GroupService.watchGroupServerConfig(activeGroup.id, cfg => {
+      if (cfg.serverFolder) {
+        setOwnerServerFolder(cfg.serverFolder);
+      }
+    }, error => console.warn('No se pudo observar la config del servidor:', error));
+  }, [activeGroup?.id, groupAccessReady]);
+
   const isHostOrAdmin = role === 'owner' || role === 'admin' || role === 'host';
   const isBroadcastingFiles = isHostOrAdmin && serverStatus === 'online';
 
+  // Carpeta a sincronizar: owner/admin usan serverFolder, host/player usan localSyncFolder
+  const syncFolderPath = isOwnerOrAdmin ? serverFolder : localSyncFolder;
+
   useEffect(() => {
-    // Solo sincronizar si es owner, admin o host, y tiene carpeta de servidor configurada
-    if (!activeGroup || !currentUser || !groupAccessReady || !serverFolder || !isHostOrAdmin) return;
+    const folderToUse = isOwnerOrAdmin ? serverFolder : localSyncFolder;
+    if (!activeGroup || !currentUser || !groupAccessReady || !folderToUse || !isHostOrAdmin) return;
     let cancelled = false;
     let stopWatching: (() => void) | null = null;
     const connect = async () => {
       try {
         const local = await invoke<{ deviceId: string }>('syncthing_connect_group', {
           groupId: activeGroup.id,
-          folderPath: serverFolder,
+          folderPath: folderToUse,
           peerIds: [],
           canPublish: isBroadcastingFiles
         });
@@ -250,7 +271,7 @@ export function App() {
         stopWatching = GroupService.watchSyncDevices(activeGroup.id, devices => {
           void invoke('syncthing_connect_group', {
             groupId: activeGroup.id,
-            folderPath: serverFolder,
+            folderPath: folderToUse,
             peerIds: devices.map(device => device.deviceId),
             canPublish: isBroadcastingFiles
           }).then(() => { if (!cancelled) setSyncConnectionError(''); })
@@ -262,7 +283,8 @@ export function App() {
     };
     void connect();
     return () => { cancelled = true; stopWatching?.(); };
-  }, [activeGroup?.id, currentUser?.uid, currentUser?.displayName, groupAccessReady, serverFolder, isHostOrAdmin, isBroadcastingFiles]);
+  }, [activeGroup?.id, currentUser?.uid, currentUser?.displayName, groupAccessReady, serverFolder, localSyncFolder, isHostOrAdmin, isBroadcastingFiles, isOwnerOrAdmin]);
+
 
   useEffect(() => {
     if (pendingGroupReload && !isSharedTransferBusy && !sharedTransferBusyRef.current) {
@@ -358,7 +380,19 @@ export function App() {
     if (serverFolder) {
       loadRealDirectory(serverFolder, '');
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [serverFolder]);
 
+  // Para miembros no-owner: cargar automáticamente los archivos del servidor del propietario
+  useEffect(() => {
+    if (!isOwnerOrAdmin && ownerServerFolder) {
+      loadRealDirectory(ownerServerFolder, '');
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ownerServerFolder, isOwnerOrAdmin]);
+
+  // Listeners de eventos Tauri y verificación inicial de procesos
+  useEffect(() => {
     // Escuchar la salida estándar (stdout/stderr) del servidor en vivo
     const unlistenServer = listen<string>('server-log', (event) => {
       const clean = event.payload
@@ -417,6 +451,7 @@ export function App() {
       unlistenPlayit.then((unlisten) => unlisten());
     };
   }, []);
+
 
   const handleStartPlayit = async () => {
     if (!isOwnerOrAdmin) return;
@@ -987,14 +1022,83 @@ export function App() {
                   : 'opacity-0 -translate-x-12 absolute top-0 left-0 w-full pointer-events-none'
               }`}
             >
+              {/* PANEL DE SYNC PARA MIEMBROS NO-OWNER: muestra carpeta del propietario y permite configurar carpeta local */}
+              {!isOwnerOrAdmin && (
+                <div className="mb-5 bg-slate-900 border border-indigo-500/20 rounded-2xl overflow-hidden shadow-xl">
+                  <div className="bg-indigo-950/40 px-6 py-3 border-b border-indigo-500/20 flex items-center gap-2">
+                    <Share2 className="w-4 h-4 text-indigo-400" />
+                    <span className="text-sm font-bold text-indigo-200">Sincronización con el Servidor del Propietario</span>
+                  </div>
+                  <div className="p-5 space-y-4">
+                    {/* Ruta del servidor del propietario (read-only) */}
+                    <div>
+                      <span className="text-xs font-semibold text-slate-400 block mb-1.5">
+                        📁 Carpeta del servidor (configurada por el propietario):
+                      </span>
+                      <div className="flex items-center gap-2 bg-slate-950 border border-slate-700 rounded-lg px-3 py-2">
+                        <span className="text-xs font-mono text-emerald-300 flex-1 truncate">
+                          {ownerServerFolder || 'El propietario aún no ha configurado la ruta del servidor.'}
+                        </span>
+                        {ownerServerFolder && (
+                          <span className="text-[10px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded font-mono">Publicada</span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Carpeta local del miembro para recibir archivos */}
+                    <div>
+                      <span className="text-xs font-semibold text-slate-400 block mb-1.5">
+                        💾 Tu carpeta local (donde recibirás los archivos del servidor):
+                      </span>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="text"
+                          value={localSyncFolder}
+                          placeholder="Ej: C:\MisServidores\MiJuego"
+                          onChange={(e) => {
+                            setLocalSyncFolder(e.target.value);
+                            localStorage.setItem('hostshift_local_sync_folder', e.target.value);
+                          }}
+                          className="flex-1 bg-slate-950 border border-slate-700 text-xs font-mono text-slate-200 px-3 py-2 rounded-lg outline-none focus:border-indigo-500 placeholder-slate-600"
+                        />
+                        <button
+                          onClick={() => {
+                            localStorage.setItem('hostshift_local_sync_folder', localSyncFolder);
+                            if (localSyncFolder) loadRealDirectory(localSyncFolder, '', true);
+                          }}
+                          disabled={!localSyncFolder.trim()}
+                          className="bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 disabled:text-slate-500 disabled:cursor-not-allowed text-white text-xs font-bold px-4 py-2 rounded-lg transition-all flex items-center gap-1.5 flex-shrink-0"
+                        >
+                          <RefreshCw className="w-3.5 h-3.5" /> Conectar y Ver
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Estado de sincronización */}
+                    <div className="flex items-center gap-2 pt-1">
+                      <div className={`w-2 h-2 rounded-full ${syncConnectionError ? 'bg-rose-400' : syncFolderPath ? 'bg-emerald-400 animate-pulse' : 'bg-slate-600'}`} />
+                      <span className="text-xs text-slate-400">
+                        {syncConnectionError
+                          ? `Error de sync: ${syncConnectionError}`
+                          : syncFolderPath
+                            ? `Syncthing activo — sincronizando desde "${ownerServerFolder || 'servidor'}"`
+                            : 'Ingresa tu carpeta local para activar la sincronización automática.'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-2xl">
                 {/* Selector de Carpeta del Servidor */}
                 <div className="bg-slate-950 px-6 py-4 border-b border-slate-800 flex items-center gap-3">
                   <FolderOpen className="w-5 h-5 text-indigo-400 flex-shrink-0" />
-                  <span className="text-xs font-semibold text-slate-300 whitespace-nowrap">Ruta de Carpeta:</span>
+                  <span className="text-xs font-semibold text-slate-300 whitespace-nowrap">
+                    {isOwnerOrAdmin ? 'Ruta de Carpeta:' : 'Archivos del servidor (vista):'}
+                  </span>
                   <input
                     type="text"
-                    value={serverFolder}
+                    value={isOwnerOrAdmin ? serverFolder : (ownerServerFolder || serverFolder)}
                     disabled={!isOwnerOrAdmin}
                     placeholder="Ejemplo: C:\Servidores\MiJuego o D:\GameServers\Server1"
                     onChange={(e) => {
@@ -1012,6 +1116,8 @@ export function App() {
                       localStorage.setItem('hostshift_server_folder', serverFolder);
                       if (activeGroup) {
                         GroupService.saveGroupServerConfig(activeGroup.id, { serverFolder });
+                        // Publicar en Firestore para que todos los miembros vean la ruta
+                        void GroupService.saveGroupServerConfigToFirestore(activeGroup.id, { serverFolder });
                       }
                       loadRealDirectory(serverFolder, '', true);
                     }}
@@ -1022,6 +1128,7 @@ export function App() {
                     <RefreshCw className="w-3.5 h-3.5" /> Guardar y Cargar
                   </button>
                 </div>
+
 
                 {/* Banner de Notificación Visual de Guardado y Carga */}
                 {folderNotification && (

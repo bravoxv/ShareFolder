@@ -426,4 +426,38 @@ export class GroupService {
       return {};
     }
   }
+
+  /**
+   * Publica la ruta del servidor en Firestore para que todos los miembros del grupo la vean.
+   * Solo el owner/admin debe llamar a este método.
+   */
+  static async saveGroupServerConfigToFirestore(
+    groupId: string,
+    config: { serverFolder?: string; launcherFile?: string; tunnelAddress?: string }
+  ): Promise<void> {
+    try {
+      await updateDoc(doc(db, 'groups', groupId), {
+        serverConfig: { ...config, updatedAt: Date.now() }
+      });
+    } catch (e) {
+      console.warn('Error publicando config de servidor en Firestore:', e);
+    }
+  }
+
+  /**
+   * Observa en tiempo real la configuración de servidor publicada por el propietario en Firestore.
+   * Útil para que hosts/players vean la ruta del servidor del owner.
+   */
+  static watchGroupServerConfig(
+    groupId: string,
+    onChange: (config: { serverFolder?: string; launcherFile?: string; tunnelAddress?: string }) => void,
+    onError?: (error: Error) => void
+  ): () => void {
+    return onSnapshot(doc(db, 'groups', groupId), snapshot => {
+      if (!snapshot.exists()) return;
+      const data = snapshot.data();
+      const cfg = (data.serverConfig || {}) as { serverFolder?: string; launcherFile?: string; tunnelAddress?: string };
+      onChange(cfg);
+    }, error => onError?.(error));
+  }
 }

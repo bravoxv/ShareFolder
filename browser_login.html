@@ -208,9 +208,20 @@
         document.getElementById('result-box').style.display = 'block';
         document.getElementById('google-btn').style.display = 'none';
 
-        // Intentar copiar automáticamente
+        // Enviar automáticamente el token al servidor local de HostShift
+        try {
+          fetch(`/callback?token=${encodeURIComponent(generatedToken)}`, { method: 'GET' })
+            .then(res => {
+              if (res.ok) {
+                document.getElementById('copy-btn').innerText = '✓ ¡Sesión transferida automáticamente a HostShift!';
+              }
+            }).catch(e => console.log('Callback directo opcional:', e));
+        } catch (e) {
+          console.log('Error callback:', e);
+        }
+
+        // Copiar automáticamente como fallback
         navigator.clipboard.writeText(generatedToken);
-        document.getElementById('copy-btn').innerText = '¡Código Copiado Automáticamente!';
       } catch (err) {
         console.error(err);
         const errorCode = err.code || '';

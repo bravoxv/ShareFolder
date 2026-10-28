@@ -18,6 +18,7 @@ import {
   KeyRound,
 } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { UserDocument, GroupDocument } from '../types/schema';
 import { getGroupPermissionError, GroupService } from '../services/groupService';
 
@@ -42,6 +43,35 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
   const [showCodeInput, setShowCodeInput] = useState(false);
   const [sessionCodeInput, setSessionCodeInput] = useState('');
   const [myGroups, setMyGroups] = useState(() => GroupService.getUserGroups());
+
+  // Escuchar el evento de autenticación automática enviado por el servidor local de Rust
+  useEffect(() => {
+    const unlistenPromise = listen<string>('auth-callback', async (event) => {
+      const token = event.payload;
+      if (!token) return;
+      setLoading(true);
+      setErrorMsg(null);
+      try {
+        const parsed = JSON.parse(atob(token.trim()));
+        if (typeof parsed?.googleAccessToken !== 'string') {
+          throw new Error('El token recibido no es válido.');
+        }
+        const user = await GroupService.loginWithGoogleAccessToken(parsed.googleAccessToken);
+        localStorage.setItem('hostshift_user', JSON.stringify(user));
+        onUserChanged(user);
+        setShowCodeInput(false);
+      } catch (err: any) {
+        console.error('Error procesando callback automático:', err);
+        setErrorMsg(err.message || 'Error vinculando la sesión de Google automáticamente.');
+      } finally {
+        setLoading(false);
+      }
+    });
+
+    return () => {
+      unlistenPromise.then(unlisten => unlisten());
+    };
+  }, [onUserChanged]);
 
   useEffect(() => {
     if (!currentUser || myGroups.length === 0) return;

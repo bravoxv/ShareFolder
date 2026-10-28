@@ -279,7 +279,7 @@ fn get_playit_tunnel_address() -> Result<Option<String>, String> {
 
 static AUTH_SERVER_PORT: Mutex<Option<u16>> = Mutex::new(None);
 
-fn ensure_auth_http_server() -> Result<u16, String> {
+fn ensure_auth_http_server(app_handle: &tauri::AppHandle) -> Result<u16, String> {
     let mut port = AUTH_SERVER_PORT
         .lock()
         .map_err(|_| "No se pudo acceder al servidor de autenticación.".to_string())?;
@@ -309,11 +309,39 @@ fn ensure_auth_http_server() -> Result<u16, String> {
             error
         )
     })?;
+    let app = app_handle.clone();
     std::thread::spawn(move || {
         let html = include_str!("../../../browser_login.html");
         for mut stream in listener.incoming().flatten() {
-            let mut request = [0_u8; 1024];
-            let _ = stream.read(&mut request);
+            let mut request = [0_u8; 4096];
+            let read_bytes = stream.read(&mut request).unwrap_or(0);
+            let req_str = String::from_utf8_lossy(&request[..read_bytes]);
+            
+            // Si la petición es el callback de autenticación: GET /callback?token=...
+            if req_str.starts_with("GET /callback") || req_str.starts_with("POST /callback") {
+                let token = if let Some(query_idx) = req_str.find("token=") {
+                    let rest = &req_str[query_idx + 6..];
+                    let end_idx = rest.find(|c: char| c == ' ' || c == '&' || c == '\r' || c == '\n').unwrap_or(rest.len());
+                    rest[..end_idx].to_string()
+                } else {
+                    String::new()
+                };
+
+                if !token.is_empty() {
+                    let _ = app.emit("auth-callback", token);
+                }
+
+                let success_body = "{\"status\":\"ok\"}";
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nAccess-Control-Allow-Origin: *\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    success_body.len(),
+                    success_body
+                );
+                let _ = stream.write_all(response.as_bytes());
+                let _ = stream.flush();
+                continue;
+            }
+
             let response = format!(
                 "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=UTF-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
                 html.len(),
@@ -328,12 +356,12 @@ fn ensure_auth_http_server() -> Result<u16, String> {
 }
 
 #[tauri::command]
-fn open_external_url(url: String) -> Result<(), String> {
+fn open_external_url(url: String, app_handle: tauri::AppHandle) -> Result<(), String> {
     #[cfg(windows)]
     {
         use std::process::Command;
         let target = if url == "browser_login.html" {
-            let port = ensure_auth_http_server()?;
+            let port = ensure_auth_http_server(&app_handle)?;
             format!("http://127.0.0.1:{}", port)
         } else if url.starts_with("http://") || url.starts_with("https://") {
             url

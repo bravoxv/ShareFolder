@@ -25,10 +25,8 @@ import {
   Share2,
   GitBranch,
   AlertCircle,
-  CheckCircle2,
-  Boxes
+  CheckCircle2
 } from 'lucide-react';
-import { HyCreatorViewer } from './components/HyCreatorViewer';
 import { Role } from './types/models';
 import { UserDocument, GroupDocument } from './types/schema';
 import { AuthGoogleModal } from './components/AuthGoogleModal';
@@ -63,7 +61,7 @@ export function App() {
   const logsThrottleTimerRef = useRef<any>(null);
 
   // Navegación animada entre pestañas centrales en la MISMA ventana: 'folder' vs 'console' vs 'roles' vs 'playit'
-  const [activeMainTab, setActiveMainTab] = useState<'folder' | 'models3d' | 'console' | 'roles' | 'playit'>('folder');
+  const [activeMainTab, setActiveMainTab] = useState<'folder' | 'console' | 'roles' | 'playit'>('folder');
 
   // Terminal / Consola del servidor
   const [serverTerminalLogs, setServerTerminalLogs] = useState<string[]>([
@@ -1129,18 +1127,6 @@ export function App() {
             </button>
 
             <button
-              onClick={() => setActiveMainTab('models3d')}
-              className={`flex items-center gap-2 px-5 py-2 rounded-lg text-xs font-bold transition-all duration-300 ${
-                activeMainTab === 'models3d'
-                  ? 'bg-gradient-to-r from-indigo-600 to-cyan-600 text-white shadow-md'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <Boxes className="w-4 h-4 text-cyan-300" />
-              Modelos 3D y Prefabs
-            </button>
-
-            <button
               onClick={() => setActiveMainTab('console')}
               className={`flex items-center gap-2 px-5 py-2 rounded-lg text-xs font-bold transition-all duration-300 ${
                 activeMainTab === 'console'
@@ -1554,17 +1540,6 @@ export function App() {
                   </div>
                 )}
               </div>
-            </div>
-
-            {/* PESTAÑA HYCREATOR: VISOR 3D DE MODELOS Y PREFABS */}
-            <div 
-              className={`transition-all duration-500 ease-in-out transform ${
-                activeMainTab === 'models3d'
-                  ? 'opacity-100 translate-x-0 relative pointer-events-auto'
-                  : 'opacity-0 translate-x-12 absolute top-0 left-0 w-full pointer-events-none'
-              }`}
-            >
-              <HyCreatorViewer serverFolder={serverFolder} localSyncFolder={localSyncFolder} />
             </div>
 
             {/* PESTAÑA B: TERMINAL / CONSOLA EN VIVO DEL SERVIDOR */}

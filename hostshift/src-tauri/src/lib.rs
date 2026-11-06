@@ -1,5 +1,6 @@
 pub mod file_manager;
 pub mod git_updater;
+pub mod hycreator;
 pub mod integrity_engine;
 pub mod process_manager;
 pub mod syncthing;
@@ -10,6 +11,10 @@ use file_manager::{
     start_server_file_download, write_server_file_chunk,
 };
 use git_updater::{apply_git_updates, check_git_updates};
+use hycreator::{
+    hycreator_get_catalog_items, hycreator_get_info, hycreator_read_asset,
+    hycreator_scan_local_prefabs,
+};
 use integrity_engine::generate_directory_manifest;
 use process_manager::ServerProcessManager;
 use std::{sync::Mutex, time::Duration};
@@ -413,7 +418,11 @@ pub fn run() {
             apply_git_updates,
             syncthing_connect_group,
             syncthing_get_folder_status,
-            syncthing_stop
+            syncthing_stop,
+            hycreator_get_info,
+            hycreator_get_catalog_items,
+            hycreator_read_asset,
+            hycreator_scan_local_prefabs
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
